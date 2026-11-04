@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Office Geral</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2025\OfficePlugins\OfficeGeral\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.App</FullClassName>
+    <AddInId>3A4B5C6D-7E8F-4901-A2B3-C4D5E6F70031</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+    <VendorEmail>contato@bimtools.com.br</VendorEmail>
+  </AddIn>
+</RevitAddIns>

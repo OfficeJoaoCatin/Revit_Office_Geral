@@ -1,0 +1,72 @@
+<Window x:Class="RevitFamilyImporter.DwgClash.Views.DwgClashSetupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Clash 2D DWG x Revit" Width="690" Height="710"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Clash 2D DWG x Revit" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock Grid.Row="1" Margin="0,5,0,18" Foreground="#555"
+                   Text="Analisa o desenho 2D do DWG contra elementos visíveis na vista ativa." />
+
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="185" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="DWG importado/vinculado:" />
+            <ComboBox Grid.Column="1" x:Name="DwgComboBox" DisplayMemberPath="DisplayName" SelectionChanged="DwgComboBox_SelectionChanged" />
+        </Grid>
+        <Grid Grid.Row="3" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="185" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Layer do DWG:" />
+            <ComboBox Grid.Column="1" x:Name="LayerComboBox" DisplayMemberPath="DisplayName" />
+        </Grid>
+
+        <GroupBox Grid.Row="4" Header="Categorias Revit analisadas" Padding="10">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" Foreground="#555"
+                           Text="Somente elementos visíveis na vista ativa e nas categorias marcadas serão verificados." />
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding CategoryOptions}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Margin="0,5" Content="{Binding Name}" IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </GroupBox>
+
+        <Grid Grid.Row="5" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="185" />
+                <ColumnDefinition Width="150" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Tolerância (mm):" />
+            <TextBox Grid.Column="1" x:Name="ToleranceTextBox" Text="5" Padding="5" />
+            <StackPanel Grid.Column="2" Margin="18,0,0,0">
+                <RadioButton x:Name="IntersectionRadio" Content="Interseção geométrica" IsChecked="True" />
+                <RadioButton x:Name="CenterRadio" Content="Centro dentro da região" Margin="0,6,0,0" />
+                <CheckBox x:Name="ClosedRegionAreaCheckBox" Content="Considerar interior de regiões fechadas"
+                          Margin="0,7,0,0" ToolTip="Desmarcado: somente a borda da polilinha gera conflito." />
+            </StackPanel>
+            <Button Grid.Column="3" Content="Analisar" Padding="18,7" Margin="10,0,8,0" Click="AnalyzeButton_Click" />
+            <Button Grid.Column="4" Content="Cancelar" Padding="18,7" Click="CancelButton_Click" />
+        </Grid>
+    </Grid>
+</Window>

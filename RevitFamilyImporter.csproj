@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+    <RevitVersion Condition="'$(RevitVersion)' == ''">2025</RevitVersion>
+    <TargetFramework Condition="'$(RevitVersion)' == '2023' Or '$(RevitVersion)' == '2024'">net48</TargetFramework>
+    <TargetFramework Condition="'$(RevitVersion)' != '2023' And '$(RevitVersion)' != '2024'">net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <UseWindowsForms Condition="'$(RevitVersion)' == '2023' Or '$(RevitVersion)' == '2024'">true</UseWindowsForms>
+    <UseWindowsForms Condition="'$(RevitVersion)' != '2023' And '$(RevitVersion)' != '2024'">false</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>RevitFamilyImporter</RootNamespace>
+    <AssemblyName>RevitFamilyImporter</AssemblyName>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Description>Plugin para importar famílias entre arquivos Revit</Description>
+    <Company>BIM Tools</Company>
+    <Product>Revit Family Importer</Product>
+
+    <!-- Não copiar DLLs do Revit para a pasta de saída -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <!-- 
+    Referências à Revit API.
+    Ajuste o caminho HintPath conforme a versão instalada do Revit no seu computador.
+    Exemplos de caminhos comuns:
+      - C:\Program Files\Autodesk\Revit 2024\
+      - C:\Program Files\Autodesk\Revit 2025\
+      - C:\Program Files\Autodesk\Revit 2026\
+  -->
+  <ItemGroup Condition="'$(RevitVersion)' == '2023' Or '$(RevitVersion)' == '2024'">
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit $(RevitVersion)\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>C:\Program Files\Autodesk\Revit $(RevitVersion)\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RevitVersion)' != '2023' And '$(RevitVersion)' != '2024'">
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit $(RevitVersion)\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>C:\Program Files\Autodesk\Revit $(RevitVersion)\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ACadSharp" Version="3.6.29" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.0" />
+  </ItemGroup>
+  <!-- Referências WPF necessárias (já incluídas pelo SDK com UseWPF=true) -->
+
+</Project>
+
+
+
+

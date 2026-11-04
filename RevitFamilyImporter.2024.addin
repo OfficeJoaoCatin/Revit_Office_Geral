@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Revit Family Importer</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2024\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.App</FullClassName>
+    <AddInId>3A4B5C6D-7E8F-4901-A2B3-C4D5E6F70031</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+    <VendorEmail>contato@bimtools.com.br</VendorEmail>
+  </AddIn>
+
+  <AddIn Type="Command">
+    <Name>Importar Familias</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2024\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.Commands.ImportFamiliesCommand</FullClassName>
+    <AddInId>4B5C6D7E-8F90-4A12-B3C4-D5E6F7003142</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+  </AddIn>
+
+  <AddIn Type="Command">
+    <Name>Exportacao em Lote</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2024\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.Commands.BatchExportCommand</FullClassName>
+    <AddInId>10C71F2C-2764-4AF8-A3F2-6A2D54E59145</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+  </AddIn>
+
+  <AddIn Type="Command">
+    <Name>Salvar Tudo</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2024\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.Commands.SaveAllOpenDocumentsCommand</FullClassName>
+    <AddInId>93D2A4C5-5F9E-4F7B-A4D0-3E7B65A45501</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+  </AddIn>
+
+  <AddIn Type="Command">
+    <Name>Sincronizar Centrais</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2024\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.Commands.SynchronizeOpenCentralModelsCommand</FullClassName>
+    <AddInId>D5A33F0C-0A3F-4C1D-9AD5-5CC0E7164822</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+  </AddIn>
+
+  <AddIn Type="Command">
+    <Name>Editar Parametros</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2024\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.Commands.BatchTypeParameterUpdateCommand</FullClassName>
+    <AddInId>31F5DBF5-8FC0-4C3D-A816-42D79C64F3F1</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+  </AddIn>
+
+  <AddIn Type="Command">
+    <Name>Legenda CAD</Name>
+    <Assembly>C:\Users\joao.catin\AppData\Roaming\Autodesk\Revit\Addins\2024\RevitFamilyImporter.dll</Assembly>
+    <FullClassName>RevitFamilyImporter.Commands.GenerateLegendLibraryCommand</FullClassName>
+    <AddInId>8DDB5F0E-46C8-4D51-A092-BB55C3E5D13B</AddInId>
+    <VendorId>BIM_TOOLS</VendorId>
+    <VendorDescription>BIM Tools - Ferramentas para Revit</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+

@@ -1,0 +1,387 @@
+<Window x:Class="RevitFamilyImporter.UI.LegendLibrary.LegendBuilderWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Legenda por Biblioteca CAD"
+        Width="1450"
+        Height="850"
+        WindowStartupLocation="CenterOwner"
+        MinWidth="1260"
+        MinHeight="760">
+    <Window.Resources>
+        <Style x:Key="HeaderText" TargetType="{x:Type TextBlock}">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#12313B"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style x:Key="PlainButton" TargetType="{x:Type Button}">
+            <Setter Property="MinWidth" Value="88"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Padding" Value="10,0"/>
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="{x:Type Button}" BasedOn="{StaticResource PlainButton}">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#24596A"/>
+            <Setter Property="BorderBrush" Value="#24596A"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Background="#F5F7F8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="64"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="58"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#24596A" Padding="18,12">
+            <DockPanel LastChildFill="True">
+                <TextBlock DockPanel.Dock="Right"
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           Text="{Binding StatusText}"/>
+                <StackPanel>
+                    <TextBlock Text="Legenda por Biblioteca CAD"
+                               Foreground="White"
+                               FontSize="17"
+                               FontWeight="SemiBold"/>
+                    <TextBlock Text="{Binding DestinationText}"
+                               Foreground="#DDEEF2"
+                               Margin="0,4,0,0"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.45*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="1*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="1.25*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Border Grid.ColumnSpan="5"
+                    Background="White"
+                    BorderBrush="#D4DEE3"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="12"
+                    Margin="0,0,0,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="14"/>
+                        <ColumnDefinition Width="150"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="150"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Arquivo DWG"
+                               Style="{StaticResource HeaderText}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,12,0"/>
+                    <TextBox Grid.Column="1"
+                             Height="30"
+                             IsReadOnly="True"
+                             VerticalContentAlignment="Center"
+                             Text="{Binding DwgPath}"/>
+                    <Button Grid.Column="2"
+                            Margin="10,0,0,0"
+                            Content="Selecionar"
+                            Command="{Binding SelectFileCommand}"
+                            Style="{StaticResource PlainButton}"/>
+                    <StackPanel Grid.Column="4">
+                        <TextBlock Text="Limites"
+                                   FontSize="11"
+                                   Foreground="#5B6A70"
+                                   Margin="0,0,0,3"/>
+                        <TextBox Height="24"
+                                 Text="{Binding BoundaryLayer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="6">
+                        <TextBlock Text="Nomes"
+                                   FontSize="11"
+                                   Foreground="#5B6A70"
+                                   Margin="0,0,0,3"/>
+                        <TextBox Height="24"
+                                 Text="{Binding NameLayer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1"
+                    Grid.Column="0"
+                    Background="White"
+                    BorderBrush="#D4DEE3"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <StackPanel DockPanel.Dock="Right"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <TextBlock Text="Buscar"
+                                       VerticalAlignment="Center"
+                                       Foreground="#5B6A70"
+                                       Margin="0,0,6,0"/>
+                            <TextBox Width="210"
+                                     Height="28"
+                                     VerticalContentAlignment="Center"
+                                     Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding SelectionSummary}"
+                                   Style="{StaticResource HeaderText}"/>
+                    </DockPanel>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding FilteredLibraryItems}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="190"
+                                            Height="214"
+                                            Margin="0,0,8,8"
+                                            BorderBrush="#D4DEE3"
+                                            BorderThickness="1"
+                                            Background="#FBFCFC"
+                                            Padding="8">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="132"/>
+                                                <RowDefinition Height="*"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+                                            <Border Grid.Row="1"
+                                                    BorderBrush="#E5E7EB"
+                                                    BorderThickness="1"
+                                                    Background="White"
+                                                    Margin="0,4">
+                                                <Image Source="{Binding Preview}" Stretch="Uniform" Margin="4"/>
+                                            </Border>
+                                            <TextBlock Grid.Row="2"
+                                                       Text="{Binding Name}"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="12"
+                                                       TextWrapping="Wrap"/>
+                                            <TextBlock Grid.Row="3"
+                                                       Text="{Binding Size}"
+                                                       Foreground="#6B7280"
+                                                       FontSize="10"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <TextBlock Grid.Row="2"
+                               Margin="0,8,0,0"
+                               Foreground="#5B6A70"
+                               Text="{Binding ReportText}"
+                               TextWrapping="Wrap"/>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1"
+                    Grid.Column="2"
+                    Background="White"
+                    BorderBrush="#D4DEE3"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right"
+                                Content="+ Grupo"
+                                Command="{Binding NewGroupCommand}"
+                                Style="{StaticResource PlainButton}"/>
+                        <TextBlock Text="Grupos" Style="{StaticResource HeaderText}"/>
+                    </DockPanel>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="Adicionar"
+                                Command="{Binding AddSelectedToGroupCommand}"
+                                Style="{StaticResource PlainButton}"
+                                Margin="0,0,6,0"/>
+                        <Button Content="Excluir"
+                                Command="{Binding DeleteGroupCommand}"
+                                Style="{StaticResource PlainButton}"/>
+                    </StackPanel>
+
+                    <ListBox Grid.Row="2"
+                             ItemsSource="{Binding Sections}"
+                             SelectedItem="{Binding SelectedSection}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Expander Header="{Binding Header}" IsExpanded="True" Margin="0,0,0,6">
+                                    <StackPanel>
+                                        <TextBox Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Margin="0,0,0,6"/>
+                                        <ListBox ItemsSource="{Binding Items}"
+                                                 SelectedItem="{Binding SelectedItem}"
+                                                 MinHeight="70"
+                                                 DisplayMemberPath="Name"/>
+                                    </StackPanel>
+                                </Expander>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <WrapPanel Grid.Row="3" Margin="0,8,0,0">
+                        <Button Content="Remover item"
+                                Command="{Binding RemoveSelectedGroupItemCommand}"
+                                Style="{StaticResource PlainButton}"
+                                Margin="0,0,6,6"/>
+                        <Button Content="Grupo ↑"
+                                Command="{Binding MoveGroupUpCommand}"
+                                Style="{StaticResource PlainButton}"
+                                Margin="0,0,6,6"/>
+                        <Button Content="Grupo ↓"
+                                Command="{Binding MoveGroupDownCommand}"
+                                Style="{StaticResource PlainButton}"
+                                Margin="0,0,6,6"/>
+                        <Button Content="Item ↑"
+                                Command="{Binding MoveItemUpCommand}"
+                                Style="{StaticResource PlainButton}"
+                                Margin="0,0,6,6"/>
+                        <Button Content="Item ↓"
+                                Command="{Binding MoveItemDownCommand}"
+                                Style="{StaticResource PlainButton}"
+                                Margin="0,0,6,6"/>
+                    </WrapPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1" Grid.Column="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Background="White"
+                        BorderBrush="#D4DEE3"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="10"
+                        Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1*"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="1*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Layout" Style="{StaticResource HeaderText}"/>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal">
+                            <RadioButton Content="Vertical" IsChecked="{Binding IsVerticalLayout}" Margin="0,0,12,0"/>
+                            <RadioButton Content="Grade" IsChecked="{Binding IsGridLayout}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Margin="0,10,0,0">
+                            <TextBlock Text="Escala CAD"/>
+                            <TextBox Height="28" Text="{Binding ImportScale, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+
+                        <Grid Grid.Column="2" Grid.RowSpan="3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="1*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Esp. horizontal"/>
+                                <TextBox Height="28" Text="{Binding HorizontalSpacing, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Esp. vertical"/>
+                                <TextBox Height="28" Text="{Binding VerticalSpacing, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,8,0,0">
+                                <TextBlock Text="Itens por coluna"/>
+                                <TextBox Height="28" Text="{Binding ItemsPerColumn, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Background="White"
+                        BorderBrush="#D4DEE3"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="10">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Preview Final" Style="{StaticResource HeaderText}"/>
+                        <Border Grid.Row="1"
+                                BorderBrush="#D4DEE3"
+                                BorderThickness="1"
+                                Background="#FBFCFC">
+                            <Image Source="{Binding FinalPreview}" Stretch="Uniform" Margin="8"/>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Background="White"
+                BorderBrush="#D4DEE3"
+                BorderThickness="0,1,0,0"
+                Padding="14,10">
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left"
+                           VerticalAlignment="Center"
+                           Foreground="#5B6A70"
+                           Text="{Binding StatusText}"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Gerar Legenda"
+                            Command="{Binding GenerateCommand}"
+                            Style="{StaticResource PrimaryButton}"
+                            Margin="0,0,8,0"/>
+                    <Button Content="Cancelar"
+                            Click="CancelButton_Click"
+                            Style="{StaticResource PlainButton}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
+
+
+
+
