@@ -122,7 +122,9 @@ namespace RevitFamilyImporter.Import.DetailImport
                                     SourceFile = detailPath
                                 };
 
-                                transaction.Commit();
+                                TransactionStatus commitStatus = transaction.Commit();
+                                if (commitStatus != TransactionStatus.Committed)
+                                    throw new InvalidOperationException($"O Revit não confirmou a transação (estado: {commitStatus}).");
                             }
                             catch
                             {

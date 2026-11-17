@@ -146,7 +146,10 @@ namespace RevitFamilyImporter.Services
             for (int i = 0; i < row.Values.Count; i++)
             {
                 string value = row.Values[i] ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(value)) continue;
+                bool empty = string.IsNullOrWhiteSpace(value);
+                bool revisionField = (i >= 12 && i <= 35) || i == 41 || (i >= 51 && i <= 58);
+                if (empty && !revisionField) continue;
+                if (empty) value = string.Empty;
 
                 bool foundAny = false;
                 foreach (string name in SheetTitleBlockParameterMapper.GetCandidates(i, row.Headers))
@@ -157,19 +160,25 @@ namespace RevitFamilyImporter.Services
                     if (parameter == null) continue;
 
                     foundAny = true;
-                    if (parameter.IsReadOnly)
+                    if (parameter.IsReadOnly || (empty && parameter.StorageType != StorageType.String))
                     {
                         report.ParametersSkipped++;
+                        if (empty)
+                            report.Messages.Add($"{row.SheetNumber} - não foi possível limpar o parâmetro de revisão '{name}' (somente leitura ou não é texto).");
                         continue;
                     }
 
                     if (SetParameterValue(doc, parameter, value))
                         report.ParametersUpdated++;
                     else
+                    {
                         report.ParametersSkipped++;
+                        if (empty)
+                            report.Messages.Add($"{row.SheetNumber} - não foi possível limpar o parâmetro de revisão '{name}'.");
+                    }
                 }
 
-                if (!foundAny)
+                if (!foundAny && !empty)
                     report.ParametersSkipped++;
             }
         }

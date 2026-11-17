@@ -14,6 +14,11 @@ namespace RevitFamilyImporter.Import.DetailImport
     {
         private const int SelectionSetCrossing = 1;
 
+        internal sealed class SelectionLimitException : Exception
+        {
+            public SelectionLimitException(string message) : base(message) { }
+        }
+
         private static readonly string[] ProgIds =
         {
             "GStarCAD.Application",
@@ -107,18 +112,22 @@ namespace RevitFamilyImporter.Import.DetailImport
                 try
                 {
                     selection = CreateSelectionSet(_sourceDoc, "RCR_DETAIL_EXPORT");
+                    _logger.Info($"GstarCAD: iniciando seleção para {region.Name}.");
                     SelectCrossing(selection, region.Bounds.Expand(GetSelectionTolerance(region)));
+                    _logger.Info($"GstarCAD: seleção concluída para {region.Name}.");
 
                     int count = GetSelectionCount(selection);
                     if (count == 0)
                         throw new InvalidOperationException("GstarCAD não encontrou entidades no recorte do detalhe.");
                     if (count > maxSelectedEntities)
                     {
-                        throw new InvalidOperationException(
+                        throw new SelectionLimitException(
                             $"A seleção do GstarCAD encontrou {count} entidades, acima do limite configurado de {maxSelectedEntities}.");
                     }
 
+                    _logger.Info($"GstarCAD: iniciando WBlock para {region.Name}; entidades={count}.");
                     _sourceDoc.WBlock(filePath, selection);
+                    _logger.Info($"GstarCAD: WBlock concluído para {region.Name}.");
                 }
                 finally
                 {
@@ -131,6 +140,11 @@ namespace RevitFamilyImporter.Import.DetailImport
 
                 _logger.Info($"Detalhe {region.Name} exportado por GstarCAD ({_progId}): {filePath}");
                 return File.Exists(filePath);
+            }
+            catch (SelectionLimitException)
+            {
+                if (!string.IsNullOrWhiteSpace(filePath)) TryDeleteFile(filePath);
+                throw;
             }
             catch (Exception ex)
             {
@@ -167,6 +181,7 @@ namespace RevitFamilyImporter.Import.DetailImport
                         return false;
                     }
 
+                    _logger.Info("GstarCAD: iniciando criação da aplicação COM.");
                     _app = CreateApplication(out _progId);
                     if (_app == null)
                     {
@@ -184,7 +199,9 @@ namespace RevitFamilyImporter.Import.DetailImport
                 }
 
                 CloseDocument(_sourceDoc, false);
+                _logger.Info($"GstarCAD: iniciando abertura do DWG {sourcePath}.");
                 _sourceDoc = OpenDocument(_app, sourcePath, true);
+                _logger.Info("GstarCAD: abertura do DWG concluída.");
                 _sourcePath = sourcePath;
                 return _sourceDoc != null;
             }

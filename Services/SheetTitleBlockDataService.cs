@@ -225,9 +225,10 @@ namespace RevitFamilyImporter.Services
             }
 
             values[CurrentRevisionIndex] = currentRevision;
-            int currentIndex = Array.IndexOf(RevisionLabels, currentRevision);
             for (int i = 0; i < RevisionLabels.Length; i++)
-                values[51 + i] = currentIndex >= 0 && i <= currentIndex ? RevisionLabels[i] : string.Empty;
+                values[51 + i] = !string.IsNullOrWhiteSpace(Get(values, RevisionDateIndexes[i]))
+                    ? RevisionLabels[i]
+                    : string.Empty;
         }
 
         private static HeaderContext ExtractHeaderContext(IList<List<string>> allRows, DisciplineBlock? block)
