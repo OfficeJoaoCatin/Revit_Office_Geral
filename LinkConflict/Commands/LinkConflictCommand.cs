@@ -24,11 +24,10 @@ namespace RevitFamilyImporter.LinkConflict.Commands
 
             try
             {
-                LinkConflictAnalysisService service = new LinkConflictAnalysisService();
-                var links = GetLoadedLinks(hostDocument, service);
+                var links = GetLoadedLinks(hostDocument);
                 if (links.Count == 0)
                 {
-                    TaskDialog.Show("Conflitos em Link", "Nenhum link carregado com categorias de modelo foi encontrado.");
+                    TaskDialog.Show("Conflitos em Link", "Nenhum link carregado foi encontrado.");
                     return Result.Cancelled;
                 }
 
@@ -50,7 +49,7 @@ namespace RevitFamilyImporter.LinkConflict.Commands
             }
         }
 
-        private static List<LinkedModelOption> GetLoadedLinks(Document hostDocument, LinkConflictAnalysisService service)
+        private static List<LinkedModelOption> GetLoadedLinks(Document hostDocument)
         {
             return new FilteredElementCollector(hostDocument)
                 .WhereElementIsNotElementType()
@@ -63,16 +62,11 @@ namespace RevitFamilyImporter.LinkConflict.Commands
                     if (linkedDocument == null)
                         return null;
 
-                    var categories = service.GetCategories(linkedDocument);
-                    if (categories.Count == 0)
-                        return null;
-
                     return new LinkedModelOption
                     {
                         LinkInstance = link,
                         Name = link.Name,
-                        DocumentTitle = linkedDocument.Title,
-                        Categories = categories
+                        DocumentTitle = linkedDocument.Title
                     };
                 })
                 .Where(option => option != null)

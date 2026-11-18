@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.ComponentModel;
+using System.Windows.Data;
+using System.Windows.Threading;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -11,6 +14,7 @@ using Autodesk.Revit.UI;
 using Microsoft.Win32;
 using RevitFamilyImporter.LinkConflict.Models;
 using RevitFamilyImporter.LinkConflict.Commands;
+using RevitFamilyImporter.LinkConflict.Services;
 using WpfMessageBox = System.Windows.MessageBox;
 using WpfSaveFileDialog = Microsoft.Win32.SaveFileDialog;
 
@@ -22,6 +26,8 @@ namespace RevitFamilyImporter.LinkConflict.Views
         private readonly RevitLinkInstance _linkInstance;
         private readonly LinkConflictReport _report;
         private readonly LinkConflictExternalEventHandler _handler;
+        private LinkConflictCompletionStore _completionStore;
+        private bool _restoringCompletion;
 
         public LinkConflictResultsWindow(UIApplication uiApp, RevitLinkInstance linkInstance, LinkConflictReport report, LinkConflictExternalEventHandler handler)
         {
@@ -30,6 +36,8 @@ namespace RevitFamilyImporter.LinkConflict.Views
             _report = report ?? throw new ArgumentNullException(nameof(report));
             _handler = handler ?? throw new ArgumentNullException(nameof(handler));
             InitializeComponent();
+            MaxWidth = SystemParameters.WorkArea.Width;
+            MaxHeight = SystemParameters.WorkArea.Height;
             ConflictsGrid.ItemsSource = _report.Conflicts;
             HostCategoryComboBox.Items.Add("Todas as categorias");
             foreach (string category in _report.Conflicts
@@ -41,17 +49,97 @@ namespace RevitFamilyImporter.LinkConflict.Views
                 HostCategoryComboBox.Items.Add(category);
             }
             HostCategoryComboBox.SelectedIndex = 0;
-            SummaryText.Text = $"Link: {_report.LinkName} | Categoria: {_report.CategoryName} | " +
-                               $"Elementos analisados: {_report.LinkedElementCount:N0} | " +
-                               $"Avisos encontrados: {_report.Conflicts.Count:N0}";
+            InitializeCompletionMemory();
+            foreach (LinkConflictItem conflict in _report.Conflicts)
+                conflict.PropertyChanged += Conflict_PropertyChanged;
+            UpdateSummary();
+            SummaryText.ToolTip = _report.CategoryName;
 
             if (_report.Conflicts.Count > 0)
                 ConflictsGrid.SelectedIndex = 0;
             else
-                DetailsText.Text = "Nenhuma interseção geométrica foi encontrada para a categoria selecionada.";
+                DetailsText.Text = "Nenhuma interseção geométrica foi encontrada para as categorias selecionadas.";
         }
 
         private LinkConflictItem SelectedConflict => ConflictsGrid.SelectedItem as LinkConflictItem;
+
+        private void InitializeCompletionMemory()
+        {
+            try
+            {
+                Document host = _uiApp.ActiveUIDocument?.Document;
+                Document linked = _linkInstance.GetLinkDocument();
+                if (host == null || linked == null)
+                    throw new InvalidOperationException("O projeto ou o link não está disponível.");
+                _completionStore = new LinkConflictCompletionStore(
+                    GetModelIdentity(host), GetModelIdentity(linked), _linkInstance.UniqueId);
+                foreach (LinkConflictItem item in _report.Conflicts)
+                    item.IsCompleted = _completionStore.IsCompleted(item.CompletionKey);
+            }
+            catch (Exception ex)
+            {
+                _completionStore = null;
+                MemoryStatusText.Text = "Memória local indisponível; marcações valerão apenas nesta janela: " + ex.Message;
+                MemoryStatusText.Foreground = System.Windows.Media.Brushes.DarkRed;
+            }
+        }
+
+        private static string GetModelIdentity(Document document)
+        {
+            string path = document.PathName ?? string.Empty;
+            try
+            {
+                if (document.IsModelInCloud)
+                    path = ModelPathUtils.ConvertModelPathToUserVisiblePath(document.GetCloudModelPath());
+                else if (document.IsWorkshared)
+                    path = ModelPathUtils.ConvertModelPathToUserVisiblePath(document.GetWorksharingCentralModelPath());
+            }
+            catch { /* O caminho local e o GUID ainda distinguem o projeto quando disponíveis. */ }
+            string projectId = document.ProjectInformation?.UniqueId ?? string.Empty;
+            if (document.CreationGUID == Guid.Empty && string.IsNullOrWhiteSpace(path) && string.IsNullOrWhiteSpace(projectId))
+                throw new InvalidOperationException("O projeto não possui identificação disponível para a memória local.");
+            return document.CreationGUID.ToString("D") + "|" + projectId + "|" + (path ?? string.Empty).Trim().ToUpperInvariant();
+        }
+
+        private void Conflict_PropertyChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(LinkConflictItem.IsCompleted) || _restoringCompletion) return;
+            var conflict = (LinkConflictItem)sender;
+            if (_completionStore != null)
+            {
+                try
+                {
+                    _completionStore.SetCompleted(conflict.CompletionKey, conflict.IsCompleted);
+                    MemoryStatusText.Text = "As marcações são pessoais e salvas neste computador; uma nova análise recalcula os conflitos.";
+                    MemoryStatusText.Foreground = System.Windows.Media.Brushes.SlateGray;
+                }
+                catch (Exception ex)
+                {
+                    _restoringCompletion = true;
+                    try { conflict.IsCompleted = !conflict.IsCompleted; }
+                    finally { _restoringCompletion = false; }
+                    MemoryStatusText.Text = "Não foi possível salvar a marcação: " + ex.Message;
+                    MemoryStatusText.Foreground = System.Windows.Media.Brushes.DarkRed;
+                }
+            }
+            UpdateSummary();
+            var view = CollectionViewSource.GetDefaultView(ConflictsGrid.ItemsSource);
+            if (view != null && view.SortDescriptions.Any(sort => sort.PropertyName == nameof(LinkConflictItem.IsCompleted)))
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    if (IsLoaded) view.Refresh();
+                }));
+        }
+
+        private void UpdateSummary()
+        {
+            int completed = _report.Conflicts.Count(conflict => conflict.IsCompleted);
+            SummaryText.Text = $"Link: {_report.LinkName} | Categorias: {_report.CategoryName} | " +
+                               $"Elementos analisados: {_report.LinkedElementCount:N0} | " +
+                               $"Avisos: {_report.Conflicts.Count:N0} | Concluídos: {completed:N0}";
+        }
+
+        private void Completed_DoubleClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
 
         public void SetMarkerStatus(string message)
         {
@@ -73,7 +161,10 @@ namespace RevitFamilyImporter.LinkConflict.Views
 
         private void Conflict_DoubleClick(object sender, MouseButtonEventArgs e)
         {
-            SelectHost_Click(sender, e);
+            var source = e.OriginalSource as DependencyObject;
+            var row = source == null ? null : System.Windows.Controls.ItemsControl.ContainerFromElement(ConflictsGrid, source) as System.Windows.Controls.DataGridRow;
+            if (row?.Item is LinkConflictItem conflict)
+                _handler.Request(LinkConflictRequest.ShowHost, conflict);
         }
 
         private void Previous_Click(object sender, RoutedEventArgs e)
@@ -149,7 +240,7 @@ namespace RevitFamilyImporter.LinkConflict.Views
             try
             {
                 StringBuilder builder = new StringBuilder();
-                builder.AppendLine("Numero;IdLink;CategoriaLink;FamiliaLink;TipoLink;IdHost;CategoriaHost;FamiliaHost;TipoHost;VolumeIntersecaoM3");
+                builder.AppendLine("Numero;IdLink;CategoriaLink;FamiliaLink;TipoLink;IdHost;CategoriaHost;FamiliaHost;TipoHost;VolumeIntersecaoM3;Concluido");
                 foreach (LinkConflictItem item in _report.Conflicts)
                 {
                     builder.AppendLine(string.Join(";", new[]
@@ -159,11 +250,12 @@ namespace RevitFamilyImporter.LinkConflict.Views
                         Csv(item.LinkedCategory), Csv(item.LinkedFamily), Csv(item.LinkedType),
                         item.HostElementId.ToString(CultureInfo.InvariantCulture),
                         Csv(item.HostCategory), Csv(item.HostFamily), Csv(item.HostType),
-                        item.IntersectionVolumeCubicMeters.ToString("G", CultureInfo.InvariantCulture)
+                        item.IntersectionVolumeCubicMeters.ToString("G", CultureInfo.InvariantCulture),
+                        item.IsCompleted ? "Sim" : "Não"
                     }));
                 }
 
-                File.WriteAllText(dialog.FileName, builder.ToString(), Encoding.UTF8);
+                File.WriteAllText(dialog.FileName, builder.ToString(), new UTF8Encoding(true));
                 WpfMessageBox.Show("Avisos exportados com sucesso.", "Conflitos em Link", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
@@ -178,10 +270,14 @@ namespace RevitFamilyImporter.LinkConflict.Views
             return "\"" + text.Replace("\"", "\"\"") + "\"";
         }
 
-        private void Close_Click(object sender, RoutedEventArgs e)
+        protected override void OnClosed(EventArgs e)
         {
+            foreach (LinkConflictItem conflict in _report.Conflicts)
+                conflict.PropertyChanged -= Conflict_PropertyChanged;
             _handler.Close();
-            Close();
+            base.OnClosed(e);
         }
+
+        private void Close_Click(object sender, RoutedEventArgs e) => Close();
     }
 }

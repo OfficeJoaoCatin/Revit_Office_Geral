@@ -1,9 +1,24 @@
 using Autodesk.Revit.DB;
+using System.ComponentModel;
 
 namespace RevitFamilyImporter.LinkConflict.Models
 {
-    public class LinkConflictItem
+    public class LinkConflictItem : INotifyPropertyChanged
     {
+        private bool _isCompleted;
+        public event PropertyChangedEventHandler? PropertyChanged;
+        public bool IsCompleted
+        {
+            get => _isCompleted;
+            set
+            {
+                if (_isCompleted == value) return;
+                _isCompleted = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCompleted)));
+            }
+        }
+
+        public string CompletionKey { get; set; } = string.Empty;
         public int Number { get; set; }
         public int LinkedElementId { get; set; }
         public string LinkedElementName { get; set; } = string.Empty;

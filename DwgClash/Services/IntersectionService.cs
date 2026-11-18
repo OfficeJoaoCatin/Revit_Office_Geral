@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using RevitFamilyImporter.DwgClash.Models;
 
 namespace RevitFamilyImporter.DwgClash.Services
@@ -15,8 +16,10 @@ namespace RevitFamilyImporter.DwgClash.Services
             DwgClashAnalysisMode mode,
             DwgClashClosedRegionMode closedRegionMode,
             double tolerance,
-            out double distance)
+            out double distance,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             distance = double.MaxValue;
             if (element == null || region == null || !BoundingBoxesOverlap(element, region, tolerance))
                 return false;
@@ -24,20 +27,20 @@ namespace RevitFamilyImporter.DwgClash.Services
             if (mode == DwgClashAnalysisMode.Center)
             {
                 bool insideArea = closedRegionMode == DwgClashClosedRegionMode.AreaOverlap &&
-                    _pointService.Contains(element.Center, region, tolerance);
+                    _pointService.Contains(element.Center, region, tolerance, cancellationToken);
                 distance = insideArea
                     ? 0
-                    : _pointService.DistanceToPolyline(element.Center, region.Points, region.IsClosed);
+                    : _pointService.DistanceToPolyline(element.Center, region.Points, region.IsClosed, cancellationToken);
                 return distance <= tolerance;
             }
 
             if (closedRegionMode == DwgClashClosedRegionMode.AreaOverlap && region.IsClosed &&
-                (element.Footprint.Any(point => _pointService.Contains(point, region, tolerance)) ||
+                (element.Footprint.Any(point => _pointService.Contains(point, region, tolerance, cancellationToken)) ||
                  _pointService.Contains(region.Points[0], new DwgRegion
                  {
                      IsClosed = true,
                      Points = element.Footprint
-                 }, tolerance)))
+                 }, tolerance, cancellationToken)))
             {
                 distance = 0;
                 return true;
@@ -45,10 +48,12 @@ namespace RevitFamilyImporter.DwgClash.Services
 
             for (int index = 0; index < element.Footprint.Count; index++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 Point2D start = element.Footprint[index];
                 Point2D end = element.Footprint[(index + 1) % element.Footprint.Count];
                 for (int regionIndex = 0; regionIndex < region.Points.Count - (region.IsClosed ? 0 : 1); regionIndex++)
                 {
+                    if (regionIndex % 256 == 0) cancellationToken.ThrowIfCancellationRequested();
                     Point2D regionStart = region.Points[regionIndex];
                     Point2D regionEnd = region.Points[(regionIndex + 1) % region.Points.Count];
                     double segmentDistance = SegmentDistance(start, end, regionStart, regionEnd);

@@ -212,6 +212,8 @@ Para Revit 2025 ou 2026, copie a DLL e um `.addin` equivalente para:
 %APPDATA%\Autodesk\Revit\Addins\2026\
 ```
 
+Para o comando **Importar Detalhes** em alta fidelidade, copie também `OfficeGstarCadWorker.exe` e `OfficeGstarCadWorker.exe.config` da pasta de compilação para a mesma pasta de `RevitFamilyImporter.dll`. O processo auxiliar requer .NET Framework 4.8. Sem ele, a alta fidelidade informará falha; o motor interno continua disponível quando escolhido.
+
 Depois reinicie o Revit. A aba **Office - Geral** deve mostrar os botoes **Importar Familias**, **Exportar Lote**, **Salvar Tudo** e **Sincronizar Centrais**.
 
 ## Como Usar

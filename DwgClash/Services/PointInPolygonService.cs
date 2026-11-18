@@ -1,25 +1,27 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using RevitFamilyImporter.DwgClash.Models;
 
 namespace RevitFamilyImporter.DwgClash.Services
 {
     public sealed class PointInPolygonService
     {
-        public bool Contains(Point2D point, DwgRegion region, double tolerance)
+        public bool Contains(Point2D point, DwgRegion region, double tolerance, CancellationToken cancellationToken = default)
         {
             if (region == null || region.Points.Count < 2)
                 return false;
 
             if (!region.IsClosed)
-                return DistanceToPolyline(point, region.Points) <= tolerance;
+                return DistanceToPolyline(point, region.Points, false, cancellationToken) <= tolerance;
 
-            if (DistanceToPolyline(point, region.Points, true) <= tolerance)
+            if (DistanceToPolyline(point, region.Points, true, cancellationToken) <= tolerance)
                 return true;
 
             bool inside = false;
             for (int index = 0, previous = region.Points.Count - 1; index < region.Points.Count; previous = index++)
             {
+                if (index % 256 == 0) cancellationToken.ThrowIfCancellationRequested();
                 Point2D currentPoint = region.Points[index];
                 Point2D previousPoint = region.Points[previous];
                 bool crosses = currentPoint.Y > point.Y != previousPoint.Y > point.Y;
@@ -34,12 +36,13 @@ namespace RevitFamilyImporter.DwgClash.Services
             return inside;
         }
 
-        public double DistanceToPolyline(Point2D point, IList<Point2D> line, bool closed = false)
+        public double DistanceToPolyline(Point2D point, IList<Point2D> line, bool closed = false, CancellationToken cancellationToken = default)
         {
             double best = double.MaxValue;
             int count = closed ? line.Count : line.Count - 1;
             for (int index = 0; index < count; index++)
             {
+                if (index % 256 == 0) cancellationToken.ThrowIfCancellationRequested();
                 Point2D start = line[index];
                 Point2D end = line[(index + 1) % line.Count];
                 best = Math.Min(best, DistanceToSegment(point, start, end));

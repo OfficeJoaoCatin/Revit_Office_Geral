@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 
 namespace RevitFamilyImporter.Import.DetailImport
 {
@@ -23,7 +24,7 @@ namespace RevitFamilyImporter.Import.DetailImport
             _gstarExporter = new GstarCadDetailExporter(_logger);
         }
 
-        public string WriteDetail(DwgDocumentModel source, DetailRegion region, string outputFolder, ImportSettings settings = null)
+        public string WriteDetail(DwgDocumentModel source, DetailRegion region, string outputFolder, ImportSettings settings = null, CancellationToken cancellationToken = default)
         {
             if (source?.NativeDocument == null)
                 throw new ArgumentNullException(nameof(source));
@@ -52,6 +53,7 @@ namespace RevitFamilyImporter.Import.DetailImport
                     settings.BoundaryLayer,
                     settings.NameLayer,
                     settings.MaxEntitiesPerDetail,
+                    cancellationToken,
                     out string highFidelityPath))
                 {
                     return highFidelityPath;

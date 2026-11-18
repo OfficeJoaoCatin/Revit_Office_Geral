@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\LinkConflict\Services\BoundedLruCache.cs" Link="BoundedLruCache.cs" />
+    <Compile Include="..\..\LinkConflict\Services\LinkConflictCompletionStore.cs" Link="LinkConflictCompletionStore.cs" />
+    <Compile Include="..\..\LinkConflict\Models\LinkConflictItem.cs" Link="LinkConflictItem.cs" />
+    <Content Include="..\..\LinkConflict\Views\LinkConflictResultsWindow.xaml" Link="LinkConflictResultsWindow.txt" TargetPath="LinkConflictResultsWindow.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

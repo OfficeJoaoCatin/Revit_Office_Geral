@@ -61,6 +61,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="GstarCadWorker\**\*.cs" />
+    <Compile Remove="tests\**\*.cs" />
+    <ProjectReference Include="GstarCadWorker\GstarCadWorker.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyGstarCadWorker" AfterTargets="Build">
+    <ItemGroup>
+      <WorkerFiles Include="GstarCadWorker\bin\$(Configuration)\OfficeGstarCadWorker.exe" />
+      <WorkerFiles Include="GstarCadWorker\bin\$(Configuration)\OfficeGstarCadWorker.exe.config" Condition="Exists('GstarCadWorker\bin\$(Configuration)\OfficeGstarCadWorker.exe.config')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WorkerFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+  <ItemGroup>
     <PackageReference Include="ACadSharp" Version="3.6.29" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
     <PackageReference Include="System.Text.Json" Version="8.0.0" />

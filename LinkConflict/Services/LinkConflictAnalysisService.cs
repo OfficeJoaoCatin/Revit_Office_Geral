@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using Autodesk.Revit.DB;
 using RevitFamilyImporter.LinkConflict.Models;
 using RevitFamilyImporter.VisibilityInspector.Utils;
@@ -13,44 +15,57 @@ namespace RevitFamilyImporter.LinkConflict.Services
         private const double IntersectionToleranceCubicFeet = 1e-8;
         private const double BoundingBoxToleranceFeet = 1e-6;
 
-        public List<LinkedCategoryOption> GetCategories(Document linkedDocument)
+        public List<LinkedCategoryOption> GetCategories(Document linkedDocument, Action<string, int, int> progress = null,
+            CancellationToken cancellationToken = default)
         {
-            if (linkedDocument == null)
-                return new List<LinkedCategoryOption>();
-
-            return new FilteredElementCollector(linkedDocument)
-                .WhereElementIsNotElementType()
-                .ToElements()
-                .Where(IsModelElement)
-                .Where(element => element.Category != null)
-                .GroupBy(element => element.Category.Id.IntegerValue)
-                .Select(group => new LinkedCategoryOption
+            if (linkedDocument == null) return new List<LinkedCategoryOption>();
+            progress?.Invoke("Identificando categorias do link...", 0, 0);
+            var categories = new Dictionary<int, LinkedCategoryOption>();
+            int processed = 0;
+            foreach (Element element in new FilteredElementCollector(linkedDocument).WhereElementIsNotElementType())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                processed++;
+                if (processed % 500 == 0) progress?.Invoke($"Identificando categorias: {processed:N0} elementos...", 0, 0);
+                if (!IsModelElement(element)) continue;
+                Category category = element.Category;
+                int id = category.Id.IntegerValue;
+                if (!categories.TryGetValue(id, out LinkedCategoryOption item))
                 {
-                    CategoryId = new ElementId(group.Key),
-                    Name = group.First().Category.Name,
-                    Count = group.Count()
-                })
-                .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+                    item = new LinkedCategoryOption { CategoryId = category.Id, Name = category.Name };
+                    categories[id] = item;
+                }
+                item.Count++;
+            }
+            return categories.Values.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        public LinkConflictReport Analyze(Document hostDocument, RevitLinkInstance linkInstance, LinkedCategoryOption category)
+        public LinkConflictReport Analyze(Document hostDocument, RevitLinkInstance linkInstance, IReadOnlyCollection<LinkedCategoryOption> categories,
+            Action<string, int, int> progress = null, CancellationToken cancellationToken = default)
         {
             if (hostDocument == null)
                 throw new ArgumentNullException(nameof(hostDocument));
             if (linkInstance == null)
                 throw new ArgumentNullException(nameof(linkInstance));
-            if (category == null)
-                throw new ArgumentNullException(nameof(category));
+            if (categories == null || categories.Count == 0)
+                throw new ArgumentException("Selecione pelo menos uma categoria do link.", nameof(categories));
 
             Document linkedDocument = linkInstance.GetLinkDocument();
             if (linkedDocument == null)
                 throw new InvalidOperationException("O modelo vinculado está descarregado ou inacessível.");
 
-            List<Element> linkedElements = new FilteredElementCollector(linkedDocument)
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke("Coletando elementos das categorias selecionadas...", 0, 0);
+            List<ElementFilter> categoryFilters = categories
+                .Select(category => (ElementFilter)new ElementCategoryFilter(category.CategoryId))
+                .ToList();
+            ElementFilter filter = categoryFilters.Count == 1
+                ? categoryFilters[0]
+                : new LogicalOrFilter(categoryFilters);
+            List<ElementId> linkedIds = new FilteredElementCollector(linkedDocument)
                 .WhereElementIsNotElementType()
-                .WherePasses(new ElementCategoryFilter(category.CategoryId))
-                .Where(IsModelElement)
+                .WherePasses(filter)
+                .ToElementIds()
                 .ToList();
 
             LinkConflictReport report = new LinkConflictReport
@@ -58,8 +73,7 @@ namespace RevitFamilyImporter.LinkConflict.Services
                 LinkName = RevitText.ElementName(linkInstance),
                 LinkInstanceId = linkInstance.Id.IntegerValue,
                 LinkedDocumentTitle = linkedDocument.Title,
-                CategoryName = category.Name,
-                LinkedElementCount = linkedElements.Count
+                CategoryName = string.Join(", ", categories.Select(category => category.Name))
             };
 
             Transform linkTransform = linkInstance.GetTotalTransform();
@@ -70,10 +84,28 @@ namespace RevitFamilyImporter.LinkConflict.Services
                 DetailLevel = ViewDetailLevel.Fine
             };
             HashSet<string> conflictKeys = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (Element linkedElement in linkedElements)
+            // Limite evita reter indefinidamente a geometria de um projeto grande.
+            const int maxCachedHosts = 1024;
+            var hostCache = new BoundedLruCache<int, HostGeometry>(maxCachedHosts);
+            var stopwatch = Stopwatch.StartNew();
+            long nextProgressMilliseconds = 0;
+            long pairsChecked = 0;
+            void ReportAnalysisProgress(int index)
             {
+                if (progress == null || stopwatch.ElapsedMilliseconds < nextProgressMilliseconds) return;
+                nextProgressMilliseconds = stopwatch.ElapsedMilliseconds + 1000;
+                progress($"Analisando elementos do link: {pairsChecked:N0} pares verificados; {report.Conflicts.Count:N0} avisos", index, linkedIds.Count);
+            }
+
+            for (int linkedIndex = 0; linkedIndex < linkedIds.Count; linkedIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ReportAnalysisProgress(linkedIndex);
+                Element linkedElement = linkedDocument.GetElement(linkedIds[linkedIndex]);
+                if (!IsModelElement(linkedElement)) continue;
+                report.LinkedElementCount++;
                 List<Solid> linkedSolids = GetTransformedSolids(linkedElement, geometryOptions, linkTransform);
+                var linkedBoxes = new Dictionary<Solid, BoundingBoxXYZ>();
                 List<Outline> linkedPartOutlines = linkedSolids.Count > 0
                     ? GetSolidOutlines(linkedSolids)
                     : GetGeometryOutlines(linkedElement, geometryOptions, linkTransform);
@@ -92,11 +124,18 @@ namespace RevitFamilyImporter.LinkConflict.Services
 
                 foreach (Element hostElement in hostCandidates)
                 {
-                    List<Solid> hostSolids = GetSolids(hostElement, geometryOptions);
-                    IntersectionData intersection = GetIntersectionData(linkedSolids, hostSolids);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ReportAnalysisProgress(linkedIndex);
                     string key = GetConflictKey(linkedElement, hostElement);
                     if (!conflictKeys.Add(key))
                         continue;
+                    int hostId = hostElement.Id.IntegerValue;
+                    HostGeometry hostGeometry = hostCache.GetOrAdd(hostId,
+                        () => new HostGeometry { Solids = GetSolids(hostElement, geometryOptions) });
+                    List<Solid> hostSolids = hostGeometry.Solids;
+                    pairsChecked++;
+                    IntersectionData intersection = GetIntersectionData(linkedSolids, hostSolids,
+                        linkedBoxes, hostGeometry.SolidBoxes, cancellationToken);
 
                     if (intersection.Volume > IntersectionToleranceCubicFeet)
                     {
@@ -109,10 +148,11 @@ namespace RevitFamilyImporter.LinkConflict.Services
                         continue;
                     }
 
-                    List<Outline> hostPartOutlines = hostSolids.Count > 0
-                        ? GetSolidOutlines(hostSolids)
-                        : GetGeometryOutlines(hostElement, geometryOptions, Transform.Identity);
-                    Outline overlap = FindPartOverlap(linkedPartOutlines, hostPartOutlines);
+                    if (hostGeometry.Outlines == null)
+                        hostGeometry.Outlines = hostSolids.Count > 0
+                            ? GetSolidOutlines(hostSolids)
+                            : GetGeometryOutlines(hostElement, geometryOptions, Transform.Identity);
+                    Outline overlap = FindPartOverlap(linkedPartOutlines, hostGeometry.Outlines);
                     if (overlap != null)
                     {
                         report.Conflicts.Add(CreateConflictItem(
@@ -129,10 +169,19 @@ namespace RevitFamilyImporter.LinkConflict.Services
                 }
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke("Análise concluída.", linkedIds.Count, linkedIds.Count);
             for (int index = 0; index < report.Conflicts.Count; index++)
                 report.Conflicts[index].Number = index + 1;
 
             return report;
+        }
+
+        private sealed class HostGeometry
+        {
+            public List<Solid> Solids { get; set; }
+            public List<Outline> Outlines { get; set; }
+            public Dictionary<Solid, BoundingBoxXYZ> SolidBoxes { get; } = new Dictionary<Solid, BoundingBoxXYZ>();
         }
 
         private static LinkConflictItem CreateConflictItem(
@@ -142,8 +191,11 @@ namespace RevitFamilyImporter.LinkConflict.Services
             XYZ markerPoint,
             bool approximate)
         {
+            Element linkedOwner = GetTopLevelFamilyInstance(linkedElement);
+            Element hostOwner = GetTopLevelFamilyInstance(hostElement);
             return new LinkConflictItem
             {
+                CompletionKey = $"{linkedElement.Category?.Id.IntegerValue}|{linkedOwner.UniqueId}|{hostOwner.UniqueId}",
                 LinkedElementId = linkedElement.Id.IntegerValue,
                 LinkedElementName = RevitText.ElementName(linkedElement),
                 LinkedFamily = RevitText.FamilyName(linkedElement.Document, linkedElement),
@@ -164,7 +216,8 @@ namespace RevitFamilyImporter.LinkConflict.Services
         {
             Element linkedOwner = GetTopLevelFamilyInstance(linkedElement);
             Element hostOwner = GetTopLevelFamilyInstance(hostElement);
-            return $"{linkedOwner.Id.IntegerValue}:{hostOwner.Id.IntegerValue}";
+            // Preserve o resultado por categoria quando elementos aninhados compartilham um pai.
+            return $"{linkedElement.Category?.Id.IntegerValue}:{linkedOwner.Id.IntegerValue}:{hostOwner.Id.IntegerValue}";
         }
 
         private static Element GetTopLevelFamilyInstance(Element element)
@@ -524,7 +577,9 @@ namespace RevitFamilyImporter.LinkConflict.Services
             public XYZ Point { get; set; }
         }
 
-        private static IntersectionData GetIntersectionData(IEnumerable<Solid> linkedSolids, IEnumerable<Solid> hostSolids)
+        private static IntersectionData GetIntersectionData(IEnumerable<Solid> linkedSolids, IEnumerable<Solid> hostSolids,
+            Dictionary<Solid, BoundingBoxXYZ> linkedBoxes, Dictionary<Solid, BoundingBoxXYZ> hostBoxes,
+            CancellationToken cancellationToken)
         {
             IntersectionData result = new IntersectionData();
             double weightedX = 0;
@@ -534,7 +589,8 @@ namespace RevitFamilyImporter.LinkConflict.Services
             {
                 foreach (Solid hostSolid in hostSolids)
                 {
-                    if (!BoundingBoxesOverlap(linkedSolid, hostSolid))
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!BoundingBoxesOverlap(GetCachedBoundingBox(linkedSolid, linkedBoxes), GetCachedBoundingBox(hostSolid, hostBoxes)))
                         continue;
 
                     try
@@ -586,10 +642,19 @@ namespace RevitFamilyImporter.LinkConflict.Services
             }
         }
 
-        private static bool BoundingBoxesOverlap(Solid first, Solid second)
+        private static BoundingBoxXYZ GetCachedBoundingBox(Solid solid, Dictionary<Solid, BoundingBoxXYZ> cache)
         {
-            BoundingBoxXYZ firstBox = first?.GetBoundingBox();
-            BoundingBoxXYZ secondBox = second?.GetBoundingBox();
+            if (solid == null) return null;
+            if (!cache.TryGetValue(solid, out BoundingBoxXYZ box))
+            {
+                box = solid.GetBoundingBox();
+                cache[solid] = box;
+            }
+            return box;
+        }
+
+        private static bool BoundingBoxesOverlap(BoundingBoxXYZ firstBox, BoundingBoxXYZ secondBox)
+        {
             if (firstBox == null || secondBox == null)
                 return true;
 

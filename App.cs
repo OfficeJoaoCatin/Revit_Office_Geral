@@ -173,7 +173,7 @@ namespace RevitFamilyImporter
                     iconKind: RibbonIconKind.LinkConflicts
                 );
 
-                linkConflictButtonData.ToolTip = "Encontrar conflitos de uma categoria dentro de um link";
+                linkConflictButtonData.ToolTip = "Encontrar conflitos de categorias selecionadas dentro de um link";
                 linkConflictButtonData.LongDescription =
                     "Selecione um link e uma categoria interna, como Structural Columns, para localizar interseções " +
                     "com elementos do modelo hospedeiro. Navegue pelos avisos, selecione os elementos e enquadre o conflito.";

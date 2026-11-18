@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\DwgClash\Models\Point2D.cs" Link="Point2D.cs" />
+    <Compile Include="..\..\DwgClash\Models\DwgRegion.cs" Link="DwgRegion.cs" />
+    <Compile Include="..\..\DwgClash\Models\RevitElementClashInfo.cs" Link="RevitElementClashInfo.cs" />
+    <Compile Include="..\..\DwgClash\Models\DwgClashSettings.cs" Link="DwgClashSettings.cs" />
+    <Compile Include="..\..\DwgClash\Models\DwgClashReport.cs" Link="DwgClashReport.cs" />
+    <Compile Include="..\..\DwgClash\Models\DwgClashResult.cs" Link="DwgClashResult.cs" />
+    <Compile Include="..\..\DwgClash\Models\DwgClashAnalysisMode.cs" Link="DwgClashAnalysisMode.cs" />
+    <Compile Include="..\..\DwgClash\Models\DwgClashClosedRegionMode.cs" Link="DwgClashClosedRegionMode.cs" />
+    <Compile Include="..\..\DwgClash\Services\DwgClashCompletionKey.cs" Link="DwgClashCompletionKey.cs" />
+    <Compile Include="..\..\DwgClash\Services\DwgRegionBuilder.cs" Link="DwgRegionBuilder.cs" />
+    <Compile Include="..\..\DwgClash\Services\ResultGenerator.cs" Link="ResultGenerator.cs" />
+    <Compile Include="..\..\DwgClash\Services\DwgRegionSpatialIndex.cs" Link="DwgRegionSpatialIndex.cs" />
+    <Compile Include="..\..\DwgClash\Services\IntersectionService.cs" Link="IntersectionService.cs" />
+    <Compile Include="..\..\DwgClash\Services\PointInPolygonService.cs" Link="PointInPolygonService.cs" />
+    <Compile Include="..\..\LinkConflict\Services\LinkConflictCompletionStore.cs" Link="LinkConflictCompletionStore.cs" />
+    <Content Include="..\..\DwgClash\Views\DwgClashResultsWindow.xaml" Link="DwgClashResultsWindow.txt" TargetPath="DwgClashResultsWindow.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

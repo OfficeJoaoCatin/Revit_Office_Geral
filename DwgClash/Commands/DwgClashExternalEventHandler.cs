@@ -64,10 +64,23 @@ namespace RevitFamilyImporter.DwgClash.Commands
                         break;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                if (_setupWindow != null && _setupWindow.IsVisible)
+                {
+                    if (request == DwgClashRequest.LoadLayers) _setupWindow.ResetImportSelection();
+                    _setupWindow.ShowValidationError(request == DwgClashRequest.LoadLayers
+                        ? "Carregamento de layers cancelado. Selecione o DWG novamente para tentar outra vez."
+                        : "Análise cancelada. Nenhum resultado parcial foi aplicado.");
+                }
+            }
             catch (Exception ex)
             {
                 if (_setupWindow != null && _setupWindow.IsVisible)
+                {
+                    if (request == DwgClashRequest.LoadLayers) _setupWindow.ResetImportSelection();
                     _setupWindow.ShowValidationError(ex.Message);
+                }
                 else if (_resultsWindow != null && _resultsWindow.IsVisible)
                     _resultsWindow.SetStatus("Erro: " + ex.Message);
                 else
@@ -85,8 +98,12 @@ namespace RevitFamilyImporter.DwgClash.Commands
             if (importInstance == null)
                 return;
 
-            var layers = new LayerCollector().GetLayers(importInstance.Document, importInstance);
-            _setupWindow.SetLayers(layers);
+            using (var progress = new ClashProgress("Carregando layers do DWG"))
+            {
+                var layers = new LayerCollector().GetLayers(importInstance.Document, importInstance, progress.Report, progress.Token);
+                progress.Token.ThrowIfCancellationRequested();
+                _setupWindow.SetLayers(layers);
+            }
         }
 
         private void Analyze(UIApplication application)
@@ -95,16 +112,22 @@ namespace RevitFamilyImporter.DwgClash.Commands
                 return;
 
             DwgClashSettings settings = _setupWindow.BuildSettings();
-            DwgGeometryReader geometryReader = new DwgGeometryReader();
-            var regions = new DwgRegionBuilder().Build(
-                geometryReader.ReadRegions(settings.ImportInstance.Document, settings.View,
-                    settings.ImportInstance, settings.Layer));
-            var revitElements = new RevitElementCollector().Collect(
-                settings.View.Document, settings.View, settings.CategoryIds);
-            DwgClashReport report = new ResultGenerator().Generate(settings, revitElements, regions);
+            DwgClashReport report;
+            DwgClashResultsWindow results;
+            using (var progress = new ClashProgress("Clash 2D DWG x Revit"))
+            {
+                DwgGeometryReader geometryReader = new DwgGeometryReader();
+                var regions = new DwgRegionBuilder().Build(
+                    geometryReader.ReadRegions(settings.ImportInstance.Document, settings.View,
+                        settings.ImportInstance, settings.Layer, progress.Report, progress.Token),
+                    progress.Report, progress.Token);
+                var revitElements = new RevitElementCollector().Collect(
+                    settings.View.Document, settings.View, settings.CategoryIds, progress.Report, progress.Token);
+                report = new ResultGenerator().Generate(settings, revitElements, regions, progress.Report, progress.Token);
+                progress.BeginFinishing();
+                results = new DwgClashResultsWindow(settings, report, new HighlightService(), this);
+            }
 
-            DwgClashResultsWindow results = new DwgClashResultsWindow(settings, report,
-                new HighlightService(), this);
             RevitWindowOwner.Attach(results, application);
             AttachResults(results);
             _setupWindow.Close();

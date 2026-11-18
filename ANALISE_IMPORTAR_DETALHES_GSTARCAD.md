@@ -180,3 +180,7 @@ As seguintes medidas foram aplicadas no Office-Geral:
 ## Melhoria ainda recomendada
 
 O isolamento do GstarCAD em um processo auxiliar com watchdog continua sendo a evolução indicada para obter timeout real. Não é seguro interromper arbitrariamente uma chamada COM do GstarCAD dentro do processo do Revit; por isso a versão atual reduz o risco por padrão, mas não tenta matar uma chamada CAD que já tenha iniciado.
+
+## Isolamento da automação CAD
+
+A geração de DWGs de alta fidelidade usa o executável auxiliar `OfficeGstarCadWorker.exe`, reutilizado ao longo do lote. O plugin aguarda cada detalhe em uma tarefa separada, com limite de 120 segundos e cancelamento. Ao esgotar o prazo ou cancelar, encerra somente o auxiliar; o GstarCAD pode permanecer aberto e deve ser conferido pelo usuário. O auxiliar verifica se a janela COM corresponde a um processo que não existia antes da ativação. Se não conseguir verificar isso, recusa a operação. Por segurança, ele não solicita o fechamento de documentos nem do GstarCAD; a sessão pode permanecer aberta mesmo após sucesso. A importação no Revit continua no contexto da API e ainda pode demorar. A leitura inicial do DWG e os previews também continuam síncronos. Consulte `TESTES-IMPORTAR-DETALHES.md` para o roteiro de validação.

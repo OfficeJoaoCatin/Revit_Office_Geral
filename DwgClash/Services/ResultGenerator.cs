@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Linq;
 using RevitFamilyImporter.DwgClash.Models;
 
@@ -8,7 +10,8 @@ namespace RevitFamilyImporter.DwgClash.Services
     {
         private readonly IntersectionService _intersection = new IntersectionService();
 
-        public DwgClashReport Generate(DwgClashSettings settings, IList<RevitElementClashInfo> elements, IList<DwgRegion> regions)
+        public DwgClashReport Generate(DwgClashSettings settings, IList<RevitElementClashInfo> elements, IList<DwgRegion> regions,
+            Action<string, int, int> progress = null, CancellationToken cancellationToken = default)
         {
             DwgClashReport report = new DwgClashReport
             {
@@ -25,14 +28,23 @@ namespace RevitFamilyImporter.DwgClash.Services
             if (elements == null || regions == null)
                 return report;
 
-            foreach (RevitElementClashInfo element in elements)
+            progress?.Invoke("Indexando regiões do DWG...", 0, 0);
+            var index = new DwgRegionSpatialIndex(regions, cancellationToken);
+            for (int elementIndex = 0; elementIndex < elements.Count; elementIndex++)
             {
-                foreach (DwgRegion region in regions)
+                cancellationToken.ThrowIfCancellationRequested();
+                RevitElementClashInfo element = elements[elementIndex];
+                if (elementIndex % 25 == 0) progress?.Invoke("Comparando elementos com o DWG...", elementIndex, elements.Count);
+                foreach (int regionIndex in index.Query(element, settings.ToleranceFeet, cancellationToken))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    DwgRegion region = regions[regionIndex];
                     if (!_intersection.Matches(element, region, settings.Mode, settings.ClosedRegionMode,
-                            settings.ToleranceFeet, out double distance))
+                            settings.ToleranceFeet, out double distance, cancellationToken))
                         continue;
 
+                    if (string.IsNullOrEmpty(region.CompletionGeometryKey))
+                        region.CompletionGeometryKey = DwgClashCompletionKey.ForRegion(region, cancellationToken);
                     report.Results.Add(new DwgClashResult
                     {
                         Number = report.Results.Count + 1,
@@ -42,6 +54,7 @@ namespace RevitFamilyImporter.DwgClash.Services
                     });
                 }
             }
+            progress?.Invoke("Comparação concluída.", elements.Count, elements.Count);
 
             return report;
         }

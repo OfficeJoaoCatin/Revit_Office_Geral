@@ -28,12 +28,12 @@ namespace RevitFamilyImporter.UI.DetailImport
 
             var buttons = new StackPanel
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
                 Margin = new Thickness(0, 20, 0, 0)
             };
             panel.Children.Add(buttons);
-            var cancel = new Button
+            var cancel = new System.Windows.Controls.Button
             {
                 Content = "Cancelar importação",
                 IsCancel = true,
@@ -43,7 +43,7 @@ namespace RevitFamilyImporter.UI.DetailImport
             };
             cancel.Click += (sender, args) => DialogResult = false;
             buttons.Children.Add(cancel);
-            var proceed = new Button
+            var proceed = new System.Windows.Controls.Button
             {
                 Content = "Continuar com motor interno",
                 Padding = new Thickness(12, 6, 12, 6)
@@ -55,7 +55,7 @@ namespace RevitFamilyImporter.UI.DetailImport
         public static bool Confirm(UIApplication uiApp, string sessions)
         {
             var dialog = new GstarCadSessionChoiceWindow(sessions);
-            Window? owner = Application.Current?.Windows.OfType<DetailImporterWindow>().FirstOrDefault();
+            Window? owner = System.Windows.Application.Current?.Windows.OfType<DetailImporterWindow>().FirstOrDefault();
             if (owner != null)
                 dialog.Owner = owner;
             else

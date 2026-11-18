@@ -19,10 +19,15 @@ namespace RevitFamilyImporter.DwgClash.Views
             IList<DwgCategoryOption> categoryOptions, DwgClashExternalEventHandler eventHandler)
         {
             InitializeComponent();
+            MaxWidth = SystemParameters.WorkArea.Width;
+            MaxHeight = SystemParameters.WorkArea.Height;
             _view = view;
             _imports = imports.ToList();
             _eventHandler = eventHandler;
             CategoryOptions = categoryOptions;
+            ElectricalOptions = categoryOptions.Where(option => option.Group == DwgCategoryGroup.Electrical).ToList();
+            HydraulicOptions = categoryOptions.Where(option => option.Group == DwgCategoryGroup.Hydraulic).ToList();
+            OtherOptions = categoryOptions.Where(option => option.Group == DwgCategoryGroup.Other).ToList();
             DataContext = this;
             DwgComboBox.ItemsSource = _imports;
             if (_imports.Count > 0)
@@ -30,6 +35,9 @@ namespace RevitFamilyImporter.DwgClash.Views
         }
 
         public IList<DwgCategoryOption> CategoryOptions { get; }
+        public IReadOnlyList<DwgCategoryOption> ElectricalOptions { get; }
+        public IReadOnlyList<DwgCategoryOption> HydraulicOptions { get; }
+        public IReadOnlyList<DwgCategoryOption> OtherOptions { get; }
 
         public ImportInstance SelectedImport =>
             (DwgComboBox.SelectedItem as DwgImportOption)?.ImportInstance;
@@ -41,7 +49,7 @@ namespace RevitFamilyImporter.DwgClash.Views
                 throw new InvalidOperationException("Selecione um DWG e um layer antes de analisar.");
 
             if (!double.TryParse(ToleranceTextBox.Text.Replace(',', '.'), NumberStyles.Float,
-                    CultureInfo.InvariantCulture, out double toleranceMm) || toleranceMm < 0)
+                    CultureInfo.InvariantCulture, out double toleranceMm) || double.IsNaN(toleranceMm) || double.IsInfinity(toleranceMm) || toleranceMm < 0)
                 throw new InvalidOperationException("A tolerância deve ser um número maior ou igual a zero.");
 
             List<ElementId> categoryIds = CategoryOptions.Where(option => option.IsSelected)
@@ -66,6 +74,7 @@ namespace RevitFamilyImporter.DwgClash.Views
 
         private void DwgComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
+            LayerComboBox.ItemsSource = null;
             if (SelectedImport != null)
                 _eventHandler.Request(DwgClashRequest.LoadLayers);
         }
@@ -86,6 +95,15 @@ namespace RevitFamilyImporter.DwgClash.Views
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
             Close();
+        }
+
+        public void ResetImportSelection()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                LayerComboBox.ItemsSource = null;
+                DwgComboBox.SelectedIndex = -1;
+            }));
         }
 
         public void SetLayers(IList<DwgLayerOption> layers)

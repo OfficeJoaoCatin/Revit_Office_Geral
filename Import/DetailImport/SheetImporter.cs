@@ -7,6 +7,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RevitFamilyImporter.Import.DetailImport
 {
@@ -25,11 +27,12 @@ namespace RevitFamilyImporter.Import.DetailImport
             _writer = new DetailDwgWriter(_logger);
         }
 
-        public DetailImportResult Import(
+        public async Task<DetailImportResult> ImportAsync(
             DwgDocumentModel source,
             IList<DetailRegion> regions,
             ImportSettings settings,
-            Action<string> progress = null)
+            Action<string> progress = null,
+            CancellationToken cancellationToken = default)
         {
             if (source == null)
                 throw new InvalidOperationException("Nenhum DWG foi carregado.");
@@ -45,6 +48,8 @@ namespace RevitFamilyImporter.Import.DetailImport
             {
                 TotalRequested = selected.Count
             };
+            if (settings.UseGstarCadHighFidelity)
+                result.Warnings.Add("O GstarCAD pode permanecer aberto após a importação. Confira a sessão antes de iniciar outra.");
             var stopwatch = Stopwatch.StartNew();
             var importStopwatch = Stopwatch.StartNew();
             string tempFolder = CreateTempFolder();
@@ -62,9 +67,13 @@ namespace RevitFamilyImporter.Import.DetailImport
 
                     try
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         ReportProgress(progress, $"Detalhe {index + 1}/{selected.Count}: gerando DWG - {detailName}");
                         stage = "gerando DWG temporario";
-                        string detailPath = _writer.WriteDetail(source, region, tempFolder, settings);
+                        string detailPath = await Task.Run(
+                            () => _writer.WriteDetail(source, region, tempFolder, settings, cancellationToken),
+                            cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
 
                         ImportedDetail imported;
                         using (Transaction transaction = new Transaction(_doc, $"Importar detalhe DWG {index + 1}/{selected.Count}"))
@@ -137,6 +146,12 @@ namespace RevitFamilyImporter.Import.DetailImport
                         result.Imported.Add(imported);
                         detailStopwatch.Stop();
                         _logger.Info($"Detalhe {detailName} concluido em {detailStopwatch.ElapsedMilliseconds} ms.");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        result.Warnings.Add("Importação cancelada. As vistas já concluídas foram mantidas. O GstarCAD pode permanecer aberto.");
+                        _logger.Info("Importação cancelada pelo usuário.");
+                        break;
                     }
                     catch (Exception ex)
                     {

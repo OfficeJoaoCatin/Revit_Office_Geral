@@ -1,5 +1,6 @@
 using Autodesk.Revit.UI;
 using System.Windows;
+using System.ComponentModel;
 
 namespace RevitFamilyImporter.UI.DetailImport
 {
@@ -12,8 +13,23 @@ namespace RevitFamilyImporter.UI.DetailImport
             DataContext = new DetailImporterViewModel(uiApp);
         }
 
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            if (DataContext is DetailImporterViewModel vm && vm.IsBusy)
+            {
+                vm.CancelImport();
+                e.Cancel = true;
+            }
+            base.OnClosing(e);
+        }
+
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
+            if (DataContext is DetailImporterViewModel vm && vm.IsBusy)
+            {
+                vm.CancelImport();
+                return;
+            }
             Close();
         }
     }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Autodesk.Revit.DB;
 using RevitFamilyImporter.DwgClash.Models;
 
@@ -11,7 +12,8 @@ namespace RevitFamilyImporter.DwgClash.Services
         private const double PointToleranceFeet = 1e-6;
 
         public List<DwgRegion> ReadRegions(Document document, Autodesk.Revit.DB.View view,
-            ImportInstance importInstance, string layer)
+            ImportInstance importInstance, string layer, Action<string, int, int> progress = null,
+            CancellationToken cancellationToken = default)
         {
             List<DwgRegion> regions = new List<DwgRegion>();
             if (document == null || importInstance == null || string.IsNullOrWhiteSpace(layer))
@@ -25,9 +27,12 @@ namespace RevitFamilyImporter.DwgClash.Services
             };
 
             ViewProjectionService projection = new ViewProjectionService(view);
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke("Lendo geometria do DWG...", 0, 0);
             GeometryElement geometry = importInstance.get_Geometry(options);
+            var scanned = new int[1];
             if (geometry != null)
-                ReadGeometry(document, geometry, Transform.Identity, projection, string.Empty, layer, regions);
+                ReadGeometry(document, geometry, Transform.Identity, projection, string.Empty, layer, regions, progress, cancellationToken, scanned);
 
             for (int index = 0; index < regions.Count; index++)
                 regions[index].Number = index + 1;
@@ -35,7 +40,8 @@ namespace RevitFamilyImporter.DwgClash.Services
             return regions;
         }
 
-        public Dictionary<string, int> CountLayers(Document document, ImportInstance importInstance)
+        public Dictionary<string, int> CountLayers(Document document, ImportInstance importInstance,
+            Action<string, int, int> progress = null, CancellationToken cancellationToken = default)
         {
             Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             if (document == null || importInstance == null)
@@ -48,9 +54,12 @@ namespace RevitFamilyImporter.DwgClash.Services
                 DetailLevel = ViewDetailLevel.Fine
             };
 
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke("Lendo layers do DWG...", 0, 0);
             GeometryElement geometry = importInstance.get_Geometry(options);
+            var scanned = new int[1];
             if (geometry != null)
-                CountGeometry(document, geometry, string.Empty, counts);
+                CountGeometry(document, geometry, string.Empty, counts, progress, cancellationToken, scanned);
             return counts;
         }
 
@@ -61,10 +70,13 @@ namespace RevitFamilyImporter.DwgClash.Services
             ViewProjectionService projection,
             string inheritedLayer,
             string targetLayer,
-            ICollection<DwgRegion> regions)
+            ICollection<DwgRegion> regions, Action<string, int, int> progress, CancellationToken cancellationToken, int[] scanned)
         {
             foreach (GeometryObject geometryObject in geometry)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                scanned[0]++;
+                if (scanned[0] % 256 == 0) progress?.Invoke($"Lendo geometria do DWG: {scanned[0]:N0} objetos...", 0, 0);
                 string layer = ResolveLayer(document, geometryObject, inheritedLayer);
                 if (geometryObject is GeometryInstance instance)
                 {
@@ -74,7 +86,7 @@ namespace RevitFamilyImporter.DwgClash.Services
                     {
                         // GetInstanceGeometry já retorna a cópia posicionada no sistema do modelo.
                         ReadGeometry(document, nestedGeometry, Transform.Identity, projection,
-                            layer, targetLayer, regions);
+                            layer, targetLayer, regions, progress, cancellationToken, scanned);
                     }
                     else
                     {
@@ -85,9 +97,10 @@ namespace RevitFamilyImporter.DwgClash.Services
                             {
                                 Transform nested = transform.Multiply(instance.Transform ?? Transform.Identity);
                                 ReadGeometry(document, nestedGeometry, nested, projection,
-                                    layer, targetLayer, regions);
+                                    layer, targetLayer, regions, progress, cancellationToken, scanned);
                             }
                         }
+                        catch (OperationCanceledException) { throw; }
                         catch
                         {
                             // Geometrias CAD incompletas são ignoradas sem interromper a análise.
@@ -117,17 +130,20 @@ namespace RevitFamilyImporter.DwgClash.Services
             Document document,
             GeometryElement geometry,
             string inheritedLayer,
-            IDictionary<string, int> counts)
+            IDictionary<string, int> counts, Action<string, int, int> progress, CancellationToken cancellationToken, int[] scanned)
         {
             foreach (GeometryObject geometryObject in geometry)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                scanned[0]++;
+                if (scanned[0] % 256 == 0) progress?.Invoke($"Lendo layers: {scanned[0]:N0} objetos...", 0, 0);
                 string layer = ResolveLayer(document, geometryObject, inheritedLayer);
                 if (geometryObject is GeometryInstance instance)
                 {
                     GeometryElement nestedGeometry = null;
                     try { nestedGeometry = instance.GetSymbolGeometry(); } catch { }
                     if (nestedGeometry != null)
-                        CountGeometry(document, nestedGeometry, layer, counts);
+                        CountGeometry(document, nestedGeometry, layer, counts, progress, cancellationToken, scanned);
                     continue;
                 }
 

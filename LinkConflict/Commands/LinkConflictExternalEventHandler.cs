@@ -14,6 +14,7 @@ namespace RevitFamilyImporter.LinkConflict.Commands
     {
         None,
         Analyze,
+        LoadCategories,
         SelectHost,
         ShowHost,
         SelectLinked,
@@ -29,7 +30,10 @@ namespace RevitFamilyImporter.LinkConflict.Commands
         private LinkConflictReport _report;
         private LinkConflictRequest _request;
         private RevitLinkInstance _linkInstance;
-        private LinkedCategoryOption _category;
+        private IReadOnlyList<LinkedCategoryOption> _categories;
+        private LinkedModelOption _categoriesLink;
+        private readonly Dictionary<Document, IReadOnlyList<LinkedCategoryOption>> _categoryCache =
+            new Dictionary<Document, IReadOnlyList<LinkedCategoryOption>>();
         private LinkConflictItem _item;
         private string _hostCategoryFilter;
 
@@ -43,10 +47,16 @@ namespace RevitFamilyImporter.LinkConflict.Commands
             _setup = setup;
         }
 
-        public void RequestAnalyze(RevitLinkInstance linkInstance, LinkedCategoryOption category)
+        public void RequestCategories(LinkedModelOption link)
+        {
+            _categoriesLink = link ?? throw new ArgumentNullException(nameof(link));
+            Raise(LinkConflictRequest.LoadCategories);
+        }
+
+        public void RequestAnalyze(RevitLinkInstance linkInstance, IReadOnlyList<LinkedCategoryOption> categories)
         {
             _linkInstance = linkInstance;
-            _category = category;
+            _categories = categories.ToList();
             Raise(LinkConflictRequest.Analyze);
         }
 
@@ -91,6 +101,9 @@ namespace RevitFamilyImporter.LinkConflict.Commands
                     case LinkConflictRequest.Analyze:
                         Analyze(app);
                         break;
+                    case LinkConflictRequest.LoadCategories:
+                        LoadCategories(app);
+                        break;
                     case LinkConflictRequest.SelectHost:
                         SelectHost(app);
                         break;
@@ -108,11 +121,26 @@ namespace RevitFamilyImporter.LinkConflict.Commands
                         break;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                if (request == LinkConflictRequest.Analyze && _setup != null)
+                {
+                    _setup.Show();
+                    _setup.SetAnalysisStatus("Análise cancelada. Nenhum resultado parcial foi aplicado.");
+                }
+                else if (request == LinkConflictRequest.LoadCategories)
+                    _setup?.CategoriesLoadFailed("Carregamento cancelado. Selecione o link novamente.");
+            }
             catch (Exception ex)
             {
-                TaskDialog.Show("Erro - Conflitos em Link", ex.Message);
-                if (request == LinkConflictRequest.Analyze && _setup != null)
-                    _setup.Show();
+                if (request == LinkConflictRequest.LoadCategories)
+                    _setup?.CategoriesLoadFailed(ex.Message);
+                else
+                {
+                    TaskDialog.Show("Erro - Conflitos em Link", ex.Message);
+                    if (request == LinkConflictRequest.Analyze && _setup != null)
+                        _setup.Show();
+                }
             }
         }
 
@@ -121,17 +149,54 @@ namespace RevitFamilyImporter.LinkConflict.Commands
             return "Conflitos em Link - Operacoes do modelo";
         }
 
+        private void LoadCategories(UIApplication app)
+        {
+            LinkedModelOption option = _categoriesLink;
+            if (option?.LinkInstance == null || !option.LinkInstance.IsValidObject)
+                throw new InvalidOperationException("A instância do link não está mais disponível. Abra o comando novamente.");
+            EnsureActiveHostDocument(app, option.LinkInstance);
+            Document linkedDocument = option.LinkInstance.GetLinkDocument();
+            if (linkedDocument == null)
+                throw new InvalidOperationException("O modelo vinculado está descarregado ou inacessível.");
+            if (!_categoryCache.TryGetValue(linkedDocument, out IReadOnlyList<LinkedCategoryOption> categories))
+            {
+                using (var progress = new ClashProgress("Carregando categorias do link"))
+                {
+                    categories = new LinkConflictAnalysisService().GetCategories(linkedDocument, progress.Report, progress.Token);
+                    progress.Token.ThrowIfCancellationRequested();
+                }
+                _categoryCache[linkedDocument] = categories;
+            }
+            _setup?.CategoriesLoaded(option, categories);
+        }
+
         private void Analyze(UIApplication app)
         {
-            if (_linkInstance == null || _category == null)
+            if (_linkInstance == null || _categories == null || _categories.Count == 0)
                 return;
-
+            if (!_linkInstance.IsValidObject)
+                throw new InvalidOperationException("A instância do link não está mais disponível. Abra o comando novamente.");
+            EnsureActiveHostDocument(app, _linkInstance);
             LinkConflictAnalysisService service = new LinkConflictAnalysisService();
-            _report = service.Analyze(app.ActiveUIDocument.Document, _linkInstance, _category);
-            _setup?.Close();
-            _results = new LinkConflictResultsWindow(app, _linkInstance, _report, this);
+            using (var progress = new ClashProgress("Conflitos em Links"))
+            {
+                _report = service.Analyze(app.ActiveUIDocument.Document, _linkInstance, _categories, progress.Report, progress.Token);
+                progress.BeginFinishing();
+                _results = new LinkConflictResultsWindow(app, _linkInstance, _report, this);
+            }
             RevitWindowOwner.Attach(_results, app);
             _results.Show();
+            _setup?.CloseForResults();
+        }
+
+        private static void EnsureActiveHostDocument(UIApplication app, RevitLinkInstance link)
+        {
+            Document activeDocument = app.ActiveUIDocument?.Document;
+            if (activeDocument == null)
+                throw new InvalidOperationException("Nenhum documento está ativo no Revit. Ative o projeto hospedeiro e tente novamente.");
+            // Wrappers diferentes podem representar o mesmo documento nativo do Revit.
+            if (!activeDocument.Equals(link.Document))
+                throw new InvalidOperationException("O documento ativo mudou. Volte ao projeto que contém o link e tente novamente.");
         }
 
         private void CreateViewMarkers(UIApplication app)

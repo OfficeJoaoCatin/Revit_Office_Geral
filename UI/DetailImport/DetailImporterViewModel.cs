@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using System.Windows;
 using System.Windows.Input;
 using WpfCursors = System.Windows.Input.Cursors;
@@ -34,6 +35,7 @@ namespace RevitFamilyImporter.UI.DetailImport
         private string _statusText = "Selecione um DWG para detectar os detalhes.";
         private string _reportText = string.Empty;
         private bool _isBusy;
+        private CancellationTokenSource _importCancellation;
         private double _margin;
         private double _spacing;
         private double _scale;
@@ -298,7 +300,7 @@ namespace RevitFamilyImporter.UI.DetailImport
             }
         }
 
-        private void InsertSelected()
+        private async void InsertSelected()
         {
             List<DetailRegion> selected = Details
                 .Where(d => d.IsSelected)
@@ -312,6 +314,7 @@ namespace RevitFamilyImporter.UI.DetailImport
             }
 
             IsBusy = true;
+            _importCancellation = new CancellationTokenSource();
             Mouse.OverrideCursor = WpfCursors.Wait;
 
             try
@@ -333,11 +336,12 @@ namespace RevitFamilyImporter.UI.DetailImport
 
                 _settingsService.Save(BuildSettings());
                 var importer = new SheetImporter(_doc, _logger);
-                DetailImportResult result = importer.Import(
+                DetailImportResult result = await importer.ImportAsync(
                     _dwgDocument,
                     selected,
                     settings,
-                    progress => StatusText = progress);
+                    progress => StatusText = progress,
+                    _importCancellation.Token);
                 OpenFirstCreatedView(result);
                 StatusText = $"{result.Imported.Count} vista(s) criada(s), {result.Failures.Count} falha(s).";
                 ReportText = BuildImportReport(result);
@@ -353,9 +357,20 @@ namespace RevitFamilyImporter.UI.DetailImport
             }
             finally
             {
+                _importCancellation?.Dispose();
+                _importCancellation = null;
                 Mouse.OverrideCursor = null;
                 IsBusy = false;
                 RefreshCommands();
+            }
+        }
+
+        public void CancelImport()
+        {
+            if (_importCancellation != null && !_importCancellation.IsCancellationRequested)
+            {
+                StatusText = "Cancelando importação...";
+                _importCancellation.Cancel();
             }
         }
 

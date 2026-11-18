@@ -8,6 +8,7 @@ namespace RevitFamilyImporter.DwgClash.Models
         public int Number { get; set; }
         public string Layer { get; set; } = string.Empty;
         public bool IsClosed { get; set; }
+        public string CompletionGeometryKey { get; set; } = string.Empty;
         public List<Point2D> Points { get; set; } = new List<Point2D>();
 
         public string Name => $"Região {Number}";

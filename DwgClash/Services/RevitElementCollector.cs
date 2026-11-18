@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Autodesk.Revit.DB;
 using RevitFamilyImporter.DwgClash.Models;
 
@@ -12,18 +13,27 @@ namespace RevitFamilyImporter.DwgClash.Services
         {
             return new List<DwgCategoryOption>
             {
-                Option(BuiltInCategory.OST_LightingFixtures, "Lighting Fixtures", true),
-                Option(BuiltInCategory.OST_ElectricalFixtures, "Electrical Fixtures", true),
-                Option(BuiltInCategory.OST_ElectricalEquipment, "Electrical Equipment", true),
-                Option(BuiltInCategory.OST_Conduit, "Conduits", true),
-                Option(BuiltInCategory.OST_ConduitFitting, "Conduit Fittings", true),
-                Option(BuiltInCategory.OST_CableTray, "Cable Trays", true),
-                Option(BuiltInCategory.OST_CableTrayFitting, "Cable Tray Fittings", true),
-                Option(BuiltInCategory.OST_GenericModel, "Generic Models", false)
+                Option(BuiltInCategory.OST_LightingFixtures, "Lighting Fixtures", true, DwgCategoryGroup.Electrical),
+                Option(BuiltInCategory.OST_ElectricalFixtures, "Electrical Fixtures", true, DwgCategoryGroup.Electrical),
+                Option(BuiltInCategory.OST_ElectricalEquipment, "Electrical Equipment", true, DwgCategoryGroup.Electrical),
+                Option(BuiltInCategory.OST_Conduit, "Conduits", true, DwgCategoryGroup.Electrical),
+                Option(BuiltInCategory.OST_ConduitFitting, "Conduit Fittings", true, DwgCategoryGroup.Electrical),
+                Option(BuiltInCategory.OST_CableTray, "Cable Trays", true, DwgCategoryGroup.Electrical),
+                Option(BuiltInCategory.OST_CableTrayFitting, "Cable Tray Fittings", true, DwgCategoryGroup.Electrical),
+                Option(BuiltInCategory.OST_PipeCurves, "Pipes", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_PipeFitting, "Pipe Fittings", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_PipeAccessory, "Pipe Accessories", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_FlexPipeCurves, "Flex Pipes", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_PlumbingFixtures, "Plumbing Fixtures", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_Sprinklers, "Sprinklers", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_MechanicalEquipment, "Mechanical Equipment", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_PipeInsulations, "Pipe Insulations", false, DwgCategoryGroup.Hydraulic),
+                Option(BuiltInCategory.OST_GenericModel, "Generic Models", false, DwgCategoryGroup.Other)
             };
         }
 
-        public List<RevitElementClashInfo> Collect(Document document, Autodesk.Revit.DB.View view, IEnumerable<ElementId> categoryIds)
+        public List<RevitElementClashInfo> Collect(Document document, Autodesk.Revit.DB.View view, IEnumerable<ElementId> categoryIds,
+            Action<string, int, int> progress = null, CancellationToken cancellationToken = default)
         {
             HashSet<int> allowed = new HashSet<int>((categoryIds ?? Enumerable.Empty<ElementId>())
                 .Where(id => id != null && id != ElementId.InvalidElementId)
@@ -33,12 +43,19 @@ namespace RevitFamilyImporter.DwgClash.Services
             if (document == null || view == null || allowed.Count == 0)
                 return result;
 
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke("Coletando categorias na vista...", 0, 0);
             IList<Element> elements = new FilteredElementCollector(document, view.Id)
                 .WhereElementIsNotElementType()
+                .WherePasses(new ElementMulticategoryFilter(allowed.Select(id => new ElementId(id)).ToList()))
                 .ToElements();
-
+            var projection = new ViewProjectionService(view);
+            int processed = 0;
             foreach (Element element in elements)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (processed % 25 == 0) progress?.Invoke("Preparando geometria dos elementos...", processed, elements.Count);
+                processed++;
                 try
                 {
                     if (element.IsHidden(view))
@@ -57,8 +74,7 @@ namespace RevitFamilyImporter.DwgClash.Services
                 if (box == null)
                     continue;
 
-                ViewProjectionService projection = new ViewProjectionService(view);
-                List<Point2D> footprint = GetGeometryFootprint(element, view, projection);
+                List<Point2D> footprint = GetGeometryFootprint(element, view, projection, cancellationToken);
                 if (footprint.Count < 3)
                     footprint = GetBoundingFootprint(box, projection);
                 if (footprint.Count < 3)
@@ -69,6 +85,7 @@ namespace RevitFamilyImporter.DwgClash.Services
                 result.Add(new RevitElementClashInfo
                 {
                     ElementId = element.Id,
+                    UniqueId = element.UniqueId,
                     Category = element.Category.Name,
                     Family = family ?? string.Empty,
                     Type = type?.Name ?? element.Name ?? string.Empty,
@@ -84,18 +101,19 @@ namespace RevitFamilyImporter.DwgClash.Services
             return result;
         }
 
-        private static DwgCategoryOption Option(BuiltInCategory category, string name, bool selected)
+        private static DwgCategoryOption Option(BuiltInCategory category, string name, bool selected, DwgCategoryGroup group)
         {
             return new DwgCategoryOption
             {
                 CategoryId = new ElementId(category),
                 Name = name,
-                IsSelected = selected
+                IsSelected = selected,
+                Group = group
             };
         }
 
         private static List<Point2D> GetGeometryFootprint(Element element, Autodesk.Revit.DB.View view,
-            ViewProjectionService projection)
+            ViewProjectionService projection, CancellationToken cancellationToken)
         {
             List<XYZ> points = new List<XYZ>();
             try
@@ -109,8 +127,9 @@ namespace RevitFamilyImporter.DwgClash.Services
                 };
                 GeometryElement geometry = element.get_Geometry(options);
                 if (geometry != null)
-                    CollectGeometryPoints(geometry, points);
+                    CollectGeometryPoints(geometry, points, cancellationToken);
             }
+            catch (OperationCanceledException) { throw; }
             catch
             {
                 // Alguns elementos não permitem extrair geometria nessa vista.
@@ -119,16 +138,17 @@ namespace RevitFamilyImporter.DwgClash.Services
             return BuildConvexHull(points.Select(projection.Project));
         }
 
-        private static void CollectGeometryPoints(GeometryElement geometry, ICollection<XYZ> points)
+        private static void CollectGeometryPoints(GeometryElement geometry, ICollection<XYZ> points, CancellationToken cancellationToken)
         {
             foreach (GeometryObject geometryObject in geometry)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (geometryObject is GeometryInstance instance)
                 {
                     GeometryElement instanceGeometry = null;
                     try { instanceGeometry = instance.GetInstanceGeometry(); } catch { }
                     if (instanceGeometry != null)
-                        CollectGeometryPoints(instanceGeometry, points);
+                        CollectGeometryPoints(instanceGeometry, points, cancellationToken);
                     continue;
                 }
 
@@ -136,6 +156,7 @@ namespace RevitFamilyImporter.DwgClash.Services
                 {
                     foreach (Edge edge in solid.Edges)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         try
                         {
                             foreach (XYZ point in edge.AsCurve().Tessellate())
