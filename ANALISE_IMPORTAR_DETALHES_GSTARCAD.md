@@ -11,7 +11,7 @@ O problema relatado é grave: durante a criação dos detalhes o Revit deixa de 
 1. A ferramenta lê o DWG internamente, detecta os limites dos detalhes e mostra os previews.
 2. Para cada detalhe selecionado, ela tenta gerar um DWG temporário de alta fidelidade usando GstarCAD.
 3. O GstarCAD abre o DWG original em modo de leitura, seleciona as entidades dentro do limite do detalhe e executa `WBlock` para gravar o recorte.
-4. Se o GstarCAD não estiver disponível ou falhar, a ferramenta usa o motor interno ACadSharp para clonar as entidades para outro DWG.
+4. O motor interno ACadSharp é usado quando selecionado ou quando o usuário aceita explicitamente continuar com ele. Se a alta fidelidade estiver selecionada e o GstarCAD falhar, o detalhe é informado como falha, sem troca automática de motor.
 5. O Revit cria uma Legend ou Drafting View, importa o DWG temporário e tenta reposicionar a importação.
 
 O GstarCAD existe para preservar com maior fidelidade blocos, atributos, estilos de texto, layers, linetypes, hachuras e demais propriedades gráficas que podem sofrer diferenças no recorte feito pelo motor interno.
@@ -171,7 +171,7 @@ Observação: chamadas à API do Revit não podem migrar para thread de fundo. A
 As seguintes medidas foram aplicadas no Office-Geral:
 
 - O motor interno passou a ser o modo padrão; o uso do GstarCAD exige a opção explícita `Usar GstarCAD para alta fidelidade`.
-- Se houver um processo GstarCAD/Gcad já aberto, a alta fidelidade é desativada para a execução atual e a ferramenta usa o motor interno. Isso evita ocultar ou encerrar a sessão de CAD do usuário.
+- Se houver um processo GstarCAD/Gcad já aberto, o usuário pode cancelar a importação ou autorizar o motor interno apenas para a execução atual. A opção de alta fidelidade permanece selecionada para tentativas posteriores.
 - Quando a alta fidelidade é habilitada, a sessão iniciada pelo comando fica visível e com alertas ativos. Assim, diálogos de licença, recuperação, fontes ou arquivos não ficam escondidos atrás do Revit.
 - O número máximo de entidades por detalhe é configurável e inicia em `10000`. Acima desse limite, o detalhe é recusado antes da importação. A seleção real feita no GstarCAD também é validada antes do `WBlock`.
 - A criação foi dividida em uma transação por detalhe. Falhas individuais são revertidas somente no item afetado; as vistas já concluídas permanecem no projeto.

@@ -320,18 +320,18 @@ namespace RevitFamilyImporter.UI.DetailImport
                 if (settings.UseGstarCadHighFidelity &&
                     GstarCadDetailExporter.TryGetRunningSessions(out string sessions))
                 {
+                    bool continueWithInternal = GstarCadSessionChoiceWindow.Confirm(_uiApp, sessions);
+                    if (!continueWithInternal)
+                    {
+                        StatusText = "Importação cancelada. A alta fidelidade continua selecionada.";
+                        return;
+                    }
+
+                    // A escolha vale apenas para esta importação; preserve a preferência na janela.
                     settings.UseGstarCadHighFidelity = false;
-                    UseGstarCadHighFidelity = false;
-                    WpfMessageBox.Show(
-                        "Há uma sessão do GstarCAD em execução (" + sessions + ").\n\n" +
-                        "Para não interferir com arquivos abertos no CAD, esta importação usará o motor interno. " +
-                        "Feche o GstarCAD antes de habilitar a alta fidelidade.",
-                        "Importar Detalhes DWG",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
                 }
 
-                _settingsService.Save(settings);
+                _settingsService.Save(BuildSettings());
                 var importer = new SheetImporter(_doc, _logger);
                 DetailImportResult result = importer.Import(
                     _dwgDocument,

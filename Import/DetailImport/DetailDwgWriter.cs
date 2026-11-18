@@ -43,20 +43,26 @@ namespace RevitFamilyImporter.Import.DetailImport
                     "Reduza o recorte ou aumente o limite após revisar o DWG.");
             }
 
-            if (settings.UseGstarCadHighFidelity && _gstarExporter.TryExport(
-                source,
-                region,
-                outputFolder,
-                settings.BoundaryLayer,
-                settings.NameLayer,
-                settings.MaxEntitiesPerDetail,
-                out string highFidelityPath))
+            if (settings.UseGstarCadHighFidelity)
             {
-                return highFidelityPath;
+                if (_gstarExporter.TryExport(
+                    source,
+                    region,
+                    outputFolder,
+                    settings.BoundaryLayer,
+                    settings.NameLayer,
+                    settings.MaxEntitiesPerDetail,
+                    out string highFidelityPath))
+                {
+                    return highFidelityPath;
+                }
+
+                throw new InvalidOperationException(
+                    "Não foi possível exportar o detalhe com alta fidelidade no GstarCAD. " +
+                    "O motor interno não foi usado. Confira o log, feche outras sessões do GstarCAD e tente novamente.");
             }
 
-            if (!settings.UseGstarCadHighFidelity)
-                _logger.Info($"Detalhe {region.Name}: motor interno selecionado pelo usuário.");
+            _logger.Info($"Detalhe {region.Name}: motor interno selecionado pelo usuário.");
 
             string name = DetailNamingService.CleanName(region.Name);
             if (string.IsNullOrWhiteSpace(name))

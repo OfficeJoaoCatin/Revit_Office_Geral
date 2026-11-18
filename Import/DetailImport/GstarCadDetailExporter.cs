@@ -207,7 +207,7 @@ namespace RevitFamilyImporter.Import.DetailImport
             }
             catch (Exception ex)
             {
-                _logger.Warn($"Nao foi possivel iniciar/reaproveitar sessao do GstarCAD. O motor interno sera usado nesta importacao. Motivo: {ex.Message}");
+                _logger.Warn($"Nao foi possivel iniciar/reaproveitar sessao do GstarCAD. A exportacao de alta fidelidade falhou. Motivo: {ex.Message}");
                 _disabled = true;
                 CloseSession();
                 return false;
