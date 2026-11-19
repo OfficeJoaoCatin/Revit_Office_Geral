@@ -9,6 +9,7 @@
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <TextBlock Text="Analisar conflitos em modelo vinculado" FontSize="20" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap"/>
         <TextBlock Grid.Row="1" Text="Escolha o link e marque uma ou mais categorias para comparar com o modelo hospedeiro." Foreground="#475569" Margin="0,6,0,14" TextWrapping="Wrap"/>
@@ -26,8 +27,15 @@
                 <DataTemplate><CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Padding="3"/></DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
-        <TextBlock x:Name="StatusText" Grid.Row="6" Margin="0,8,0,8" Foreground="#475569" TextWrapping="Wrap"/>
-        <WrapPanel Grid.Row="7" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="6" Margin="0,8,0,0">
+            <CheckBox x:Name="DiagnosticModeCheckBox" ToolTip="Gera um resumo para investigação; não produz um relatório completo de conflitos."><TextBlock Text="Diagnóstico rápido (amostra parcial: até 200 elementos, 20.000 pares ou 60 s)" TextWrapping="Wrap"/></CheckBox>
+            <WrapPanel Margin="20,5,0,0">
+                <TextBlock Text="Posição inicial na lista coletada:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox x:Name="DiagnosticStartText" Width="85" Text="1" IsEnabled="{Binding IsChecked, ElementName=DiagnosticModeCheckBox}" ToolTip="Use 1 para iniciar do começo ou 3001 para investigar mais adiante. A ordem pode mudar entre análises."/>
+            </WrapPanel>
+        </StackPanel>
+        <TextBlock x:Name="StatusText" Grid.Row="7" Margin="0,8,0,8" Foreground="#475569" TextWrapping="Wrap"/>
+        <WrapPanel Grid.Row="8" HorizontalAlignment="Right">
             <Button Content="Cancelar" MinWidth="90" Margin="0,0,8,0" Padding="10,6" Click="Cancel_Click"/>
             <Button x:Name="AnalyzeButton" Content="Analisar" MinWidth="100" Padding="10,6" IsDefault="True" Click="Analyze_Click"/>
         </WrapPanel>

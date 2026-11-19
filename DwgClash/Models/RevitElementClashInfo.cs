@@ -7,6 +7,7 @@ namespace RevitFamilyImporter.DwgClash.Models
     {
         public ElementId ElementId { get; set; }
         public string UniqueId { get; set; } = string.Empty;
+        public string OwnerUniqueId { get; set; } = string.Empty;
         public string Category { get; set; } = string.Empty;
         public string Family { get; set; } = string.Empty;
         public string Type { get; set; } = string.Empty;

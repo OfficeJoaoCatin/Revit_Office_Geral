@@ -8,12 +8,15 @@
         <StackPanel Grid.Row="0" Margin="0,0,0,10">
             <TextBlock Text="Conflitos em Link" FontSize="22" FontWeight="SemiBold" Foreground="#111827"/>
             <TextBlock x:Name="SummaryText" Foreground="#475569" TextWrapping="Wrap" MaxHeight="52" TextTrimming="CharacterEllipsis" Margin="0,2,0,6"/>
+            <TextBlock x:Name="PerformanceText" Foreground="#475569" Margin="0,0,0,6" TextWrapping="Wrap"/>
+            <TextBlock x:Name="UnverifiedStatusText" Visibility="Collapsed" Foreground="#A12A2A" Margin="0,0,0,6" TextWrapping="Wrap"/>
             <TextBlock x:Name="MemoryStatusText" Text="As marcações são pessoais e salvas neste computador; uma nova análise recalcula os conflitos." Foreground="#64748B" Margin="0,0,0,6" TextWrapping="Wrap"/>
             <WrapPanel>
                 <TextBlock Text="Categoria host:" VerticalAlignment="Center" Margin="0,0,6,4" Foreground="#334155"/>
                 <ComboBox x:Name="HostCategoryComboBox" Width="170" Height="28" Margin="0,0,8,4"/>
                 <Button Content="Criar avisos na planta" Padding="10,5" Margin="0,0,8,4" Click="CreateMarkers_Click"/>
-                <Button Content="Exportar avisos" Padding="10,5" Margin="0,0,8,4" Click="Export_Click"/>
+                <Button Content="Exportar conflitos" Padding="10,5" Margin="0,0,8,4" Click="Export_Click"/>
+                <Button x:Name="UnverifiedButton" Content="Ver itens não verificados" Visibility="Collapsed" Padding="10,5" Margin="0,0,8,4" Click="ShowUnverified_Click"/>
             </WrapPanel>
         </StackPanel>
         <Grid Grid.Row="1">

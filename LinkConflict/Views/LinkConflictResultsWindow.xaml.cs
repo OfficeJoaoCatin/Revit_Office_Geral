@@ -54,11 +54,34 @@ namespace RevitFamilyImporter.LinkConflict.Views
                 conflict.PropertyChanged += Conflict_PropertyChanged;
             UpdateSummary();
             SummaryText.ToolTip = _report.CategoryName;
+            if (_report.HasUnverified)
+            {
+                UnverifiedStatusText.Text = "A análise está incompleta: há elementos ou pares sem geometria verificável. Veja os itens não verificados.";
+                UnverifiedStatusText.Visibility = System.Windows.Visibility.Visible;
+                UnverifiedButton.Visibility = System.Windows.Visibility.Visible;
+            }
+
+            PerformanceText.Text = $"Análise: {_report.AnalysisDuration.TotalSeconds:N1} s | " +
+                $"Pares verificados: {_report.ComparedPairCount:N0} | " +
+                $"Sem candidatos próximos: {_report.PrefilteredLinkedElementCount:N0} | " +
+                $"Regiões vazias reutilizadas: {_report.EmptyRegionReuses:N0}";
+            if (_report.UnboundedLinkedElementCount > 0 || _report.UnboundedHostPairCount > 0)
+            {
+                PerformanceText.Text += $" | Sem caixa confiável: {_report.UnboundedLinkedElementCount:N0} no link; {_report.UnboundedHostPairCount:N0} pares no hospedeiro";
+                PerformanceText.Foreground = System.Windows.Media.Brushes.DarkRed;
+            }
+            PerformanceText.ToolTip = $"Busca de candidatos: {_report.SearchDuration.TotalSeconds:N1} s; " +
+                $"leitura de geometria: {_report.GeometryDuration.TotalSeconds:N1} s; " +
+                $"preparação das linhas/curvas: {_report.CurvePreparationDuration.TotalSeconds:N1} s; " +
+                $"comparações e resultados: {_report.ComparisonDuration.TotalSeconds:N1} s. " +
+                "O tempo total inclui também outras etapas da análise.";
 
             if (_report.Conflicts.Count > 0)
                 ConflictsGrid.SelectedIndex = 0;
             else
-                DetailsText.Text = "Nenhuma interseção geométrica foi encontrada para as categorias selecionadas.";
+                DetailsText.Text = _report.HasUnverified
+                    ? "Nenhum conflito físico foi confirmado. Há itens não verificados; a ausência de conflitos não está comprovada."
+                    : "Nenhum conflito físico foi confirmado para as categorias selecionadas.";
         }
 
         private LinkConflictItem SelectedConflict => ConflictsGrid.SelectedItem as LinkConflictItem;
@@ -84,7 +107,7 @@ namespace RevitFamilyImporter.LinkConflict.Views
             }
         }
 
-        private static string GetModelIdentity(Document document)
+        internal static string GetModelIdentity(Document document)
         {
             string path = document.PathName ?? string.Empty;
             try
@@ -136,7 +159,16 @@ namespace RevitFamilyImporter.LinkConflict.Views
             int completed = _report.Conflicts.Count(conflict => conflict.IsCompleted);
             SummaryText.Text = $"Link: {_report.LinkName} | Categorias: {_report.CategoryName} | " +
                                $"Elementos analisados: {_report.LinkedElementCount:N0} | " +
-                               $"Avisos: {_report.Conflicts.Count:N0} | Concluídos: {completed:N0}";
+                               $"Conflitos confirmados: {_report.Conflicts.Count:N0} | Concluídos: {completed:N0}";
+        }
+
+        private void ShowUnverified_Click(object sender, RoutedEventArgs e)
+        {
+            var window = new LinkConflictDiagnosticWindow(_report.UnverifiedSummary,
+                "Itens não verificados — Conflitos em Links",
+                "Estes itens não são conflitos confirmados; eles precisam de revisão porque não puderam ser verificados.");
+            window.Owner = this;
+            window.Show();
         }
 
         private void Completed_DoubleClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
@@ -152,11 +184,13 @@ namespace RevitFamilyImporter.LinkConflict.Views
             if (conflict == null)
                 return;
 
+            string relation = conflict.IsApproximate ? "pode ter conflito com" : "intersecta";
+            string resultLabel = conflict.IsApproximate ? "Verificação" : "Volume de interseção";
             DetailsText.Text =
                 $"Aviso {conflict.Number}: elemento do link #{conflict.LinkedElementId} ({conflict.LinkedCategory}) " +
-                $"{conflict.LinkedFamily} / {conflict.LinkedType} intersecta o elemento host #{conflict.HostElementId} " +
+                $"{conflict.LinkedFamily} / {conflict.LinkedType} {relation} o elemento host #{conflict.HostElementId} " +
                 $"({conflict.HostCategory}) {conflict.HostFamily} / {conflict.HostType}. " +
-                $"Volume estimado: {conflict.IntersectionText}.";
+                $"{resultLabel}: {conflict.IntersectionText}.";
         }
 
         private void Conflict_DoubleClick(object sender, MouseButtonEventArgs e)
@@ -232,7 +266,7 @@ namespace RevitFamilyImporter.LinkConflict.Views
             WpfSaveFileDialog dialog = new WpfSaveFileDialog
             {
                 Filter = "CSV (*.csv)|*.csv|Todos os arquivos (*.*)|*.*",
-                FileName = "avisos_conflitos_link.csv"
+                FileName = "conflitos_fisicos_link.csv"
             };
             if (dialog.ShowDialog() != true)
                 return;
@@ -240,7 +274,7 @@ namespace RevitFamilyImporter.LinkConflict.Views
             try
             {
                 StringBuilder builder = new StringBuilder();
-                builder.AppendLine("Numero;IdLink;CategoriaLink;FamiliaLink;TipoLink;IdHost;CategoriaHost;FamiliaHost;TipoHost;VolumeIntersecaoM3;Concluido");
+                builder.AppendLine("Numero;IdLink;CategoriaLink;FamiliaLink;TipoLink;IdHost;CategoriaHost;FamiliaHost;TipoHost;VolumeIntersecaoM3;Concluido;VolumeParcial");
                 foreach (LinkConflictItem item in _report.Conflicts)
                 {
                     builder.AppendLine(string.Join(";", new[]
@@ -251,12 +285,13 @@ namespace RevitFamilyImporter.LinkConflict.Views
                         item.HostElementId.ToString(CultureInfo.InvariantCulture),
                         Csv(item.HostCategory), Csv(item.HostFamily), Csv(item.HostType),
                         item.IntersectionVolumeCubicMeters.ToString("G", CultureInfo.InvariantCulture),
-                        item.IsCompleted ? "Sim" : "Não"
+                        item.IsCompleted ? "Sim" : "Não",
+                        item.IsPartialVolume ? "Sim" : "Não"
                     }));
                 }
 
                 File.WriteAllText(dialog.FileName, builder.ToString(), new UTF8Encoding(true));
-                WpfMessageBox.Show("Avisos exportados com sucesso.", "Conflitos em Link", MessageBoxButton.OK, MessageBoxImage.Information);
+                WpfMessageBox.Show("Conflitos confirmados exportados com sucesso.", "Conflitos em Link", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {

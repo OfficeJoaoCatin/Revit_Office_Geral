@@ -1,5 +1,6 @@
 using Autodesk.Revit.DB;
 using System.ComponentModel;
+using System.Collections.Generic;
 
 namespace RevitFamilyImporter.DwgClash.Models
 {
@@ -18,9 +19,11 @@ namespace RevitFamilyImporter.DwgClash.Models
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Status)));
             }
         }
-        public string CompletionKey => string.IsNullOrWhiteSpace(Element?.UniqueId) || string.IsNullOrWhiteSpace(Region?.CompletionGeometryKey)
+        private string CompletionOwner => string.IsNullOrWhiteSpace(Element?.OwnerUniqueId) ? Element?.UniqueId ?? string.Empty : Element.OwnerUniqueId;
+        public string CompletionKey => string.IsNullOrWhiteSpace(CompletionOwner) || string.IsNullOrWhiteSpace(Region?.CompletionGeometryKey)
             ? string.Empty
-            : Element.UniqueId + "|" + Region.CompletionGeometryKey;
+            : CompletionOwner + "|" + Region.CompletionGeometryKey;
+        public HashSet<string> PreviousCompletionKeys { get; } = new HashSet<string>(System.StringComparer.Ordinal);
 
         public int Number { get; set; }
         public RevitElementClashInfo Element { get; set; }

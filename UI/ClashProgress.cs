@@ -71,7 +71,7 @@ namespace RevitFamilyImporter.UI
             catch (InvalidOperationException) { }
         }
 
-        public void BeginFinishing()
+        public void BeginFinishing(string message = null)
         {
             Token.ThrowIfCancellationRequested();
             Dispatcher dispatcher = _dispatcher;
@@ -80,7 +80,7 @@ namespace RevitFamilyImporter.UI
             dispatcher.Invoke(new Action(() =>
             {
                 _finishing = true;
-                _message.Text = "Preparando a tabela de resultados. Aguarde a conclusão desta etapa.";
+                _message.Text = message ?? "Preparando a tabela de resultados. Aguarde a conclusão desta etapa.";
                 _bar.IsIndeterminate = true;
                 _cancelButton.IsEnabled = false;
             }), DispatcherPriority.Send);

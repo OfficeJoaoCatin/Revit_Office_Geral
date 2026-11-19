@@ -35,6 +35,7 @@ namespace RevitFamilyImporter.UI
         private bool _exportDwg;
         private bool _useDocumentPdfSettings = true;
         private bool _forceGlobalDwgSettings = true;
+        private bool _copyDwgSetupToProjects;
         private SheetSelectionMode _selectedSheetSelectionMode = SheetSelectionMode.AllSheets;
         private string _profileName = "Novo perfil";
         private int _timeoutSeconds = 120;
@@ -247,6 +248,20 @@ namespace RevitFamilyImporter.UI
             get => _forceGlobalDwgSettings;
             set => SetProperty(ref _forceGlobalDwgSettings, value);
         }
+
+        public bool CopyDwgSetupToProjects
+        {
+            get => _copyDwgSetupToProjects;
+            set
+            {
+                if (SetProperty(ref _copyDwgSetupToProjects, value))
+                {
+                    OnPropertyChanged(nameof(UseIndependentDwgSettings));
+                }
+            }
+        }
+
+        public bool UseIndependentDwgSettings => !CopyDwgSetupToProjects;
 
         public SheetSelectionMode SelectedSheetSelectionMode
         {
@@ -484,6 +499,15 @@ namespace RevitFamilyImporter.UI
 
         private BatchExportRequest BuildRequest()
         {
+            if (ExportDwg && CopyDwgSetupToProjects)
+            {
+                Autodesk.Revit.DB.Document? source = SelectedDocument?.Document;
+                if (source == null || !source.IsValidObject)
+                    throw new InvalidOperationException("Selecione na aba Projetos o projeto de origem do setup DWG.");
+                if (SelectedDwgSettings == null || string.IsNullOrWhiteSpace(SelectedDwgSettings.Name) ||
+                    Autodesk.Revit.DB.ExportDWGSettings.FindByName(source, SelectedDwgSettings.Name) == null)
+                    throw new InvalidOperationException("Selecione um setup DWG existente no projeto de origem. O setup 'Padrao' da ferramenta não pode ser copiado.");
+            }
             List<ExportDocumentInfo> selectedDocuments = Documents
                 .Where(document => document.Selected && document.Document != null)
                 .ToList();
@@ -502,6 +526,9 @@ namespace RevitFamilyImporter.UI
                 ExportDwg = ExportDwg,
                 UseDocumentPdfSettings = UseDocumentPdfSettings,
                 ForceGlobalDwgSettings = ForceGlobalDwgSettings,
+                CopyDwgSetupToProjects = CopyDwgSetupToProjects,
+                DwgSetupSourceDocument = SelectedDocument?.Document,
+                DwgSetupSourceKey = SelectedDocument?.StableKey ?? string.Empty,
                 NamingTemplate = NamingTemplate,
                 PdfSettings = ClonePdfSettings(SelectedPdfSettings),
                 DwgSettings = CloneDwgSettings(SelectedDwgSettings),
@@ -548,7 +575,11 @@ namespace RevitFamilyImporter.UI
                 }
             }
 
-            SelectedDocument = Documents.FirstOrDefault(document => document.Selected) ?? Documents.FirstOrDefault();
+            SelectedDocument = checkpoint.Profile.CopyDwgSetupToProjects
+                ? Documents.FirstOrDefault(document => string.Equals(document.StableKey, checkpoint.Profile.DwgSetupSourceKey, StringComparison.OrdinalIgnoreCase))
+                : Documents.FirstOrDefault(document => document.Selected) ?? Documents.FirstOrDefault();
+            if (checkpoint.Profile.CopyDwgSetupToProjects && SelectedDocument != null)
+                SelectedDwgSettings = EnsureDwgSetting(checkpoint.Profile.DwgSetupName);
             CurrentStatus = $"Checkpoint carregado: {checkpoint.CurrentProjectPath} / {checkpoint.CurrentSheetNumber}";
         }
 
@@ -584,12 +615,15 @@ namespace RevitFamilyImporter.UI
 
         private void ApplyProfile(BatchExportProfile profile)
         {
+            if (profile.CopyDwgSetupToProjects)
+                SelectedDocument = Documents.FirstOrDefault(document => string.Equals(document.StableKey, profile.DwgSetupSourceKey, StringComparison.OrdinalIgnoreCase));
             ProfileName = profile.Name == "Checkpoint" ? "Novo perfil" : profile.Name;
             DestinationFolder = profile.DestinationFolder;
             ExportPdf = profile.ExportPdf;
             ExportDwg = profile.ExportDwg;
             UseDocumentPdfSettings = profile.UseDocumentPdfSettings;
             ForceGlobalDwgSettings = profile.ForceGlobalDwgSettings;
+            CopyDwgSetupToProjects = profile.CopyDwgSetupToProjects;
             NamingTemplate = profile.NamingTemplate;
             TimeoutSeconds = profile.TimeoutSeconds;
             MemoryLimitMb = profile.MemoryLimitMb;
@@ -621,6 +655,8 @@ namespace RevitFamilyImporter.UI
                 ExportDwg = ExportDwg,
                 UseDocumentPdfSettings = UseDocumentPdfSettings,
                 ForceGlobalDwgSettings = ForceGlobalDwgSettings,
+                CopyDwgSetupToProjects = CopyDwgSetupToProjects,
+                DwgSetupSourceKey = SelectedDocument?.StableKey ?? string.Empty,
                 PdfSetupName = SelectedPdfSettings?.Name ?? string.Empty,
                 DwgSetupName = SelectedDwgSettings?.Name ?? string.Empty,
                 PdfCombine = SelectedPdfSettings?.Combine == true,

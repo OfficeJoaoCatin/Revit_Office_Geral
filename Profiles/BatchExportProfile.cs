@@ -16,6 +16,9 @@ namespace RevitFamilyImporter.Profiles
 
         public bool ForceGlobalDwgSettings { get; set; } = true;
 
+        public bool CopyDwgSetupToProjects { get; set; }
+        public string DwgSetupSourceKey { get; set; } = string.Empty;
+
         public string PdfSetupName { get; set; } = string.Empty;
 
         public string DwgSetupName { get; set; } = string.Empty;

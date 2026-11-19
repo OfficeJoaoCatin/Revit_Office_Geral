@@ -31,6 +31,7 @@ namespace RevitFamilyImporter.LinkConflict.Models
         public string HostType { get; set; } = string.Empty;
         public string HostCategory { get; set; } = string.Empty;
         public double IntersectionVolumeCubicMeters { get; set; }
+        public bool IsPartialVolume { get; set; }
         public XYZ MarkerPoint { get; set; }
         public bool IsApproximate { get; set; }
 
@@ -39,7 +40,7 @@ namespace RevitFamilyImporter.LinkConflict.Models
 
         public string IntersectionText =>
             IntersectionVolumeCubicMeters > 0
-                ? $"{IntersectionVolumeCubicMeters:0.000} m³"
+                ? $"{(IsPartialVolume ? "≥ " : "")}{IntersectionVolumeCubicMeters:0.000} m³"
                 : "Interseção por caixa (aproximada)";
     }
 }

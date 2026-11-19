@@ -31,17 +31,36 @@ class Program
         var element = new RevitElementClashInfo { UniqueId="element-1", Center=new Point2D(5,5), MinX=4, MaxX=6, MinY=4, MaxY=6,
             Footprint=new List<Point2D> { new Point2D(4,4), new Point2D(6,4), new Point2D(6,6), new Point2D(4,6) } };
         var intersection = new IntersectionService();
+        var child = new RevitElementClashInfo { UniqueId="child-1", OwnerUniqueId="parent-1", Center=element.Center, MinX=4, MaxX=6, MinY=4, MaxY=6, Footprint=element.Footprint };
+        var parent = new RevitElementClashInfo { UniqueId="parent-1", OwnerUniqueId="parent-1", Center=element.Center, MinX=4, MaxX=6, MinY=4, MaxY=6, Footprint=element.Footprint };
+        var other = new RevitElementClashInfo { UniqueId="other", OwnerUniqueId="other", Center=element.Center, MinX=4, MaxX=6, MinY=4, MaxY=6, Footprint=element.Footprint };
+        var settings = new DwgClashSettings { Mode = DwgClashAnalysisMode.Center, ClosedRegionMode = DwgClashClosedRegionMode.AreaOverlap };
+        var combined = new ResultGenerator().Generate(settings, new[] { child, parent, other }, new[] { region, changed });
+        Check(combined.Results.Count == 4, "Famílias devem ser agrupadas por proprietário e por região, preservando outros elementos.");
+        Check(combined.Results.Count(r => r.Element.UniqueId == "parent-1") == 2, "Quando a família mãe também conflita, ela deve representar o grupo.");
+        var childOnly = new ResultGenerator().Generate(settings, new[] { child }, new[] { region });
+        Check(childOnly.Results.Count == 1 && childOnly.Results[0].Element.UniqueId == "child-1", "Um conflito apenas do componente aninhado não pode ser perdido.");
+        Check(childOnly.Results[0].CompletionKey == combined.Results.First(r => r.Element.UniqueId == "parent-1" && r.Region == region).CompletionKey, "A memória deve acompanhar o proprietário independentemente do componente encontrado.");
         Check(!intersection.Matches(element, region, DwgClashAnalysisMode.Intersection, DwgClashClosedRegionMode.BoundaryOnly, .1, out _), "O interior foi considerado com a opção desmarcada.");
         Check(intersection.Matches(element, region, DwgClashAnalysisMode.Intersection, DwgClashClosedRegionMode.AreaOverlap, .1, out _), "O interior não foi considerado no modo de interseção.");
         Check(!intersection.Matches(element, region, DwgClashAnalysisMode.Center, DwgClashClosedRegionMode.BoundaryOnly, .1, out _), "O centro interno foi considerado com somente bordas.");
         Check(intersection.Matches(element, region, DwgClashAnalysisMode.Center, DwgClashClosedRegionMode.AreaOverlap, .1, out _), "O centro interno não foi considerado.");
         var nearLine = NewRegion(false, new Point2D(6.05,3), new Point2D(6.05,7));
+        var marker = DwgMarkerPoint.ForResult(element, NewRegion(false, new Point2D(5, 3), new Point2D(5, 7)));
+        Check(marker.X == 5 && marker.Y == 5, "Marcador deve usar a região de sobreposição das caixas.");
+        marker = DwgMarkerPoint.ForResult(element, nearLine);
+        Check(marker.X == element.Center.X && marker.Y == element.Center.Y, "Sem caixas sobrepostas, o marcador deve usar o centro do elemento.");
         Check(intersection.Matches(element, nearLine, DwgClashAnalysisMode.Intersection, DwgClashClosedRegionMode.BoundaryOnly, .1, out _), "A proximidade dentro da tolerância não foi considerada.");
         Check(!intersection.Matches(element, nearLine, DwgClashAnalysisMode.Intersection, DwgClashClosedRegionMode.BoundaryOnly, .01, out _), "A proximidade fora da tolerância foi considerada.");
         string root = Path.Combine(Path.GetTempPath(), "office-dwg-check-" + Guid.NewGuid().ToString("N"));
         try
         {
             var store = new LinkConflictCompletionStore("project", "view", "dwg", root);
+            var legacy = combined.Results.First(r => r.Element.UniqueId == "parent-1" && r.Region == region);
+            store.SetCompleted(child.UniqueId + "|" + region.CompletionGeometryKey, true);
+            Check(DwgCompletionMigration.IsCompleted(store, legacy), "Marcação anterior do componente aninhado deve ser preservada.");
+            store.SetCompleted(legacy.CompletionKey, false);
+            Check(!DwgCompletionMigration.IsCompleted(new LinkConflictCompletionStore("project", "view", "dwg", root), legacy), "Após desmarcar, a marcação antiga não deve retornar.");
             store.SetCompleted(element.UniqueId + "|" + key, true);
             Check(new LinkConflictCompletionStore("project", "view", "dwg", root).IsCompleted(element.UniqueId + "|" + DwgClashCompletionKey.ForRegion(same)), "A marcação não foi recuperada.");
             Check(!new LinkConflictCompletionStore("project", "other-view", "dwg", root).IsCompleted(element.UniqueId + "|" + key), "Vistas distintas compartilharam marcação.");

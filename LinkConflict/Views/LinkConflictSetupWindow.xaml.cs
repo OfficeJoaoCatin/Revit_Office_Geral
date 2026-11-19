@@ -66,6 +66,7 @@ namespace RevitFamilyImporter.LinkConflict.Views
             AnalyzeButton.IsEnabled = !loading;
             SelectAllButton.IsEnabled = !loading;
             ClearButton.IsEnabled = !loading;
+            DiagnosticModeCheckBox.IsEnabled = !loading;
         }
 
         private void SetCategorySelection(bool selected)
@@ -91,9 +92,16 @@ namespace RevitFamilyImporter.LinkConflict.Views
                 WpfMessageBox.Show("Selecione pelo menos uma categoria do link.", "Conflitos em Link", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
+            bool diagnosticMode = DiagnosticModeCheckBox.IsChecked == true;
+            int diagnosticStart = 1;
+            if (diagnosticMode && (!int.TryParse(DiagnosticStartText.Text, out diagnosticStart) || diagnosticStart < 1))
+            {
+                WpfMessageBox.Show("Informe uma posição inicial inteira a partir de 1.", "Conflitos em Link", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             try
             {
-                _handler.RequestAnalyze(link.LinkInstance, categories);
+                _handler.RequestAnalyze(link.LinkInstance, categories, diagnosticMode, diagnosticStart);
                 Hide();
             }
             catch (Exception ex) { WpfMessageBox.Show(ex.Message, "Conflitos em Link", MessageBoxButton.OK, MessageBoxImage.Error); }

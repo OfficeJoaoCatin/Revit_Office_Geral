@@ -4,6 +4,7 @@
     <Compile Include="..\..\LinkConflict\Services\BoundedLruCache.cs" Link="BoundedLruCache.cs" />
     <Compile Include="..\..\LinkConflict\Services\LinkConflictCompletionStore.cs" Link="LinkConflictCompletionStore.cs" />
     <Compile Include="..\..\LinkConflict\Models\LinkConflictItem.cs" Link="LinkConflictItem.cs" />
+    <Content Include="..\..\LinkConflict\Views\LinkConflictSetupWindow.xaml" Link="LinkConflictSetupWindow.txt" TargetPath="LinkConflictSetupWindow.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\LinkConflict\Views\LinkConflictResultsWindow.xaml" Link="LinkConflictResultsWindow.txt" TargetPath="LinkConflictResultsWindow.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using Autodesk.Revit.DB;
 using RevitFamilyImporter.DwgClash.Models;
+using RevitFamilyImporter.LinkConflict.Services;
 
 namespace RevitFamilyImporter.DwgClash.Services
 {
@@ -82,10 +83,14 @@ namespace RevitFamilyImporter.DwgClash.Services
 
                 ElementType type = element.Document.GetElement(element.GetTypeId()) as ElementType;
                 string family = type is FamilySymbol symbol ? symbol.FamilyName : type?.get_Parameter(BuiltInParameter.SYMBOL_FAMILY_NAME_PARAM)?.AsString();
+                string ownerUniqueId = element.UniqueId;
+                try { ownerUniqueId = LinkConflictAnalysisService.GetTopLevelFamilyInstance(element)?.UniqueId ?? ownerUniqueId; }
+                catch { /* Sem identificação confiável, mantém o elemento separado. */ }
                 result.Add(new RevitElementClashInfo
                 {
                     ElementId = element.Id,
                     UniqueId = element.UniqueId,
+                    OwnerUniqueId = ownerUniqueId,
                     Category = element.Category.Name,
                     Family = family ?? string.Empty,
                     Type = type?.Name ?? element.Name ?? string.Empty,

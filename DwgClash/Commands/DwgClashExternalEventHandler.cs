@@ -1,10 +1,13 @@
 using System;
+using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitFamilyImporter.DwgClash.Models;
 using RevitFamilyImporter.DwgClash.Services;
 using RevitFamilyImporter.DwgClash.Views;
 using RevitFamilyImporter.UI;
+using RevitFamilyImporter.LinkConflict.Models;
+using RevitFamilyImporter.LinkConflict.Services;
 
 namespace RevitFamilyImporter.DwgClash.Commands
 {
@@ -13,8 +16,7 @@ namespace RevitFamilyImporter.DwgClash.Commands
         LoadLayers,
         Analyze,
         Select,
-        Highlight,
-        ClearHighlights
+        CreateViewMarkers
     }
 
     public sealed class DwgClashExternalEventHandler : IExternalEventHandler
@@ -56,11 +58,8 @@ namespace RevitFamilyImporter.DwgClash.Commands
                     case DwgClashRequest.Select:
                         Select(application);
                         break;
-                    case DwgClashRequest.Highlight:
-                        Highlight(application);
-                        break;
-                    case DwgClashRequest.ClearHighlights:
-                        ClearHighlights();
+                    case DwgClashRequest.CreateViewMarkers:
+                        CreateViewMarkers(application);
                         break;
                 }
             }
@@ -125,7 +124,7 @@ namespace RevitFamilyImporter.DwgClash.Commands
                     settings.View.Document, settings.View, settings.CategoryIds, progress.Report, progress.Token);
                 report = new ResultGenerator().Generate(settings, revitElements, regions, progress.Report, progress.Token);
                 progress.BeginFinishing();
-                results = new DwgClashResultsWindow(settings, report, new HighlightService(), this);
+                results = new DwgClashResultsWindow(settings, report, this);
             }
 
             RevitWindowOwner.Attach(results, application);
@@ -146,21 +145,28 @@ namespace RevitFamilyImporter.DwgClash.Commands
             _resultsWindow.SetStatus("Elemento " + result.ElementId + " selecionado e enquadrado.");
         }
 
-        private void Highlight(UIApplication application)
+        private void CreateViewMarkers(UIApplication application)
         {
-            if (_resultsWindow == null)
-                return;
-            _resultsWindow.HighlightService.Apply(application, _resultsWindow.Settings.View,
-                _resultsWindow.Settings.ImportInstance, _resultsWindow.Report);
-            _resultsWindow.SetStatus("Conflitos destacados em vermelho e DWG destacado em amarelo.");
-        }
-
-        private void ClearHighlights()
-        {
-            if (_resultsWindow == null)
-                return;
-            _resultsWindow.HighlightService.Clear(_resultsWindow.Settings.View);
-            _resultsWindow.SetStatus("Destaques removidos e overrides originais restaurados.");
+            if (_resultsWindow == null) return;
+            var settings = _resultsWindow.Settings;
+            UIDocument ui = application.ActiveUIDocument;
+            if (settings.View == null || !settings.View.IsValidObject || ui?.Document == null || !ui.Document.Equals(settings.View.Document))
+                throw new InvalidOperationException("Ative o projeto usado na análise para criar os avisos.");
+            if (!(settings.View is ViewPlan sourceView))
+                throw new InvalidOperationException("A análise precisa ter sido feita em uma vista de planta para criar os avisos.");
+            if (_resultsWindow.Report.Results.Count == 0)
+                throw new InvalidOperationException("Não há conflitos para marcar.");
+            XYZ origin = sourceView.Origin ?? XYZ.Zero;
+            XYZ right = sourceView.RightDirection.Normalize();
+            XYZ up = sourceView.UpDirection.Normalize();
+            var markers = _resultsWindow.Report.Results.Select(result =>
+            {
+                var center = DwgMarkerPoint.ForResult(result.Element, result.Region);
+                return new LinkConflictItem { HostElementId = result.ElementId, MarkerPoint = origin + right * center.X + up * center.Y };
+            }).ToList();
+            ViewPlan view = new LinkConflictMarkerService().CreateInCopiedView(ui.Document, sourceView, markers, out int created, "Clash 2D DWG", true);
+            ui.ActiveView = view;
+            _resultsWindow.SetStatus($"{created} aviso(s) criado(s) na cópia '{view.Name}'. As posições são aproximadas.");
         }
     }
 }

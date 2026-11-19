@@ -17,6 +17,35 @@ namespace RevitFamilyImporter.LinkConflict.Services
             _capacity = capacity;
         }
 
+        public bool TryGetValue(TKey key, out TValue value)
+        {
+            if (_entries.TryGetValue(key, out var node))
+            {
+                _usage.Remove(node);
+                _usage.AddLast(node);
+                value = node.Value.Value;
+                return true;
+            }
+            value = default!;
+            return false;
+        }
+
+        public void Set(TKey key, TValue value)
+        {
+            if (_entries.TryGetValue(key, out var current))
+            {
+                _usage.Remove(current);
+                _entries.Remove(key);
+            }
+            else if (_entries.Count == _capacity)
+            {
+                var oldest = _usage.First!;
+                _entries.Remove(oldest.Value.Key);
+                _usage.RemoveFirst();
+            }
+            _entries.Add(key, _usage.AddLast(new KeyValuePair<TKey, TValue>(key, value)));
+        }
+
         public TValue GetOrAdd(TKey key, Func<TValue> factory)
         {
             if (_entries.TryGetValue(key, out var node))

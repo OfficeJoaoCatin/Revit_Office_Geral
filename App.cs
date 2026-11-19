@@ -180,12 +180,23 @@ namespace RevitFamilyImporter
 
                 AddItemSafe(modelPanel, linkConflictButtonData);
 
+                PushButtonData internalConflictButtonData = CreateButton(
+                    name: "ConflitosNoProjeto",
+                    text: "Conflitos\nno Projeto",
+                    assemblyName: assemblyPath,
+                    className: "RevitFamilyImporter.InternalClash.InternalClashCommand",
+                    iconKind: RibbonIconKind.InternalConflicts
+                );
+                internalConflictButtonData.ToolTip = "Encontrar conflitos físicos entre elementos do próprio projeto";
+                internalConflictButtonData.LongDescription = "Compare as categorias selecionadas entre si. Pares conectados fisicamente pelos conectores do Revit são ignorados.";
+                AddItemSafe(modelPanel, internalConflictButtonData);
+
                 PushButtonData dwgClashButtonData = CreateButton(
                     name: "Clash2DDwg",
                     text: "Clash 2D\nDWG",
                     assemblyName: assemblyPath,
                     className: "RevitFamilyImporter.DwgClash.Commands.DwgClashCommand",
-                    iconKind: RibbonIconKind.LinkConflicts
+                    iconKind: RibbonIconKind.DwgConflicts
                 );
 
                 dwgClashButtonData.ToolTip = "Comparar geometrias 2D de um DWG com elementos Revit";

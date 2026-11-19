@@ -340,16 +340,22 @@
                                           IsChecked="{Binding ExportDwg, Mode=TwoWay}"
                                           FontWeight="Bold"
                                           Margin="0,0,0,10"/>
+                                <TextBlock Text="Projeto de origem: selecione uma linha na aba Projetos" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"/>
+                                <TextBlock Text="{Binding SelectedDocument.ProjectName, TargetNullValue=(nenhum projeto selecionado)}" FontWeight="SemiBold" Margin="0,2,0,6"/>
                                 <TextBlock Text="Setup DWG" FontWeight="SemiBold"/>
                                 <ComboBox ItemsSource="{Binding DwgSettings}"
                                           SelectedItem="{Binding SelectedDwgSettings, Mode=TwoWay}"
                                           DisplayMemberPath="Name"
                                           Margin="0,4,0,10"/>
+                                <CheckBox Content="Copiar setup de origem para os projetos exportados"
+                                          IsChecked="{Binding CopyDwgSetupToProjects, Mode=TwoWay}"
+                                          ToolTip="Copia o setup sem substituir os existentes. Salve ou sincronize os projetos para preservar as cópias."
+                                          Margin="0,0,0,8"/>
+                                <TextBlock Text="Ao copiar, o setup de origem é preservado. Mesclar vistas e versão são aplicadas às cópias e à exportação."
+                                           TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
                                 <CheckBox Content="Forcar setup global"
                                           IsChecked="{Binding ForceGlobalDwgSettings, Mode=TwoWay}"
-                                          Margin="0,0,0,8"/>
-                                <CheckBox Content="Exportar links"
-                                          IsChecked="{Binding SelectedDwgSettings.ExportLinks, Mode=TwoWay}"
+                                          IsEnabled="{Binding UseIndependentDwgSettings}"
                                           Margin="0,0,0,8"/>
                                 <CheckBox Content="Mesclar vistas"
                                           IsChecked="{Binding SelectedDwgSettings.MergeViews, Mode=TwoWay}"
@@ -520,10 +526,12 @@
                             Margin="0,12,0,0"
                             Padding="0"
                             Visibility="{Binding HasReport, Converter={StaticResource BoolToVisibility}}">
-                        <ListBox ItemsSource="{Binding Report.Files}"
-                                 FontFamily="Consolas"
-                                 FontSize="12"
-                                 BorderThickness="0"/>
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <ListBox ItemsSource="{Binding Report.Files}" FontFamily="Consolas" FontSize="12" BorderThickness="0"/>
+                            <TextBlock Grid.Row="1" Text="Setups DWG" FontWeight="SemiBold" Margin="8,5"/>
+                            <ListBox Grid.Row="2" ItemsSource="{Binding Report.DwgSetupMessages}" FontSize="12" BorderThickness="0"/>
+                        </Grid>
                     </Border>
                 </Grid>
             </TabItem>

@@ -31,6 +31,8 @@ namespace RevitFamilyImporter.LinkConflict.Commands
         private LinkConflictRequest _request;
         private RevitLinkInstance _linkInstance;
         private IReadOnlyList<LinkedCategoryOption> _categories;
+        private bool _diagnosticMode;
+        private int _diagnosticStartPosition = 1;
         private LinkedModelOption _categoriesLink;
         private readonly Dictionary<Document, IReadOnlyList<LinkedCategoryOption>> _categoryCache =
             new Dictionary<Document, IReadOnlyList<LinkedCategoryOption>>();
@@ -53,10 +55,12 @@ namespace RevitFamilyImporter.LinkConflict.Commands
             Raise(LinkConflictRequest.LoadCategories);
         }
 
-        public void RequestAnalyze(RevitLinkInstance linkInstance, IReadOnlyList<LinkedCategoryOption> categories)
+        public void RequestAnalyze(RevitLinkInstance linkInstance, IReadOnlyList<LinkedCategoryOption> categories, bool diagnosticMode, int diagnosticStartPosition)
         {
             _linkInstance = linkInstance;
             _categories = categories.ToList();
+            _diagnosticMode = diagnosticMode;
+            _diagnosticStartPosition = diagnosticStartPosition;
             Raise(LinkConflictRequest.Analyze);
         }
 
@@ -180,13 +184,25 @@ namespace RevitFamilyImporter.LinkConflict.Commands
             LinkConflictAnalysisService service = new LinkConflictAnalysisService();
             using (var progress = new ClashProgress("Conflitos em Links"))
             {
-                _report = service.Analyze(app.ActiveUIDocument.Document, _linkInstance, _categories, progress.Report, progress.Token);
-                progress.BeginFinishing();
-                _results = new LinkConflictResultsWindow(app, _linkInstance, _report, this);
+                _report = service.Analyze(app.ActiveUIDocument.Document, _linkInstance, _categories, progress.Report, progress.Token, _diagnosticMode, _diagnosticStartPosition);
+                progress.BeginFinishing(_diagnosticMode ? "Preparando o resumo do diagnóstico." : null);
+                if (!_diagnosticMode)
+                    _results = new LinkConflictResultsWindow(app, _linkInstance, _report, this);
             }
-            RevitWindowOwner.Attach(_results, app);
-            _results.Show();
-            _setup?.CloseForResults();
+            if (_diagnosticMode)
+            {
+                _setup?.Show();
+                var diagnosticWindow = new LinkConflictDiagnosticWindow(_report.DiagnosticText);
+                RevitWindowOwner.Attach(diagnosticWindow, app);
+                diagnosticWindow.Show();
+                _setup?.SetAnalysisStatus("Diagnóstico parcial concluído. A análise completa não foi executada.");
+            }
+            else
+            {
+                RevitWindowOwner.Attach(_results, app);
+                _results.Show();
+                _setup?.CloseForResults();
+            }
         }
 
         private static void EnsureActiveHostDocument(UIApplication app, RevitLinkInstance link)

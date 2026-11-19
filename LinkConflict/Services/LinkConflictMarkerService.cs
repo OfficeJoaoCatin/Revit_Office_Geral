@@ -15,7 +15,9 @@ namespace RevitFamilyImporter.LinkConflict.Services
             Document document,
             ViewPlan sourceView,
             IReadOnlyList<LinkConflictItem> conflicts,
-            out int created)
+            out int created,
+            string viewSuffix = "Conflitos em Link",
+            bool withDetailing = false)
         {
             if (document == null)
                 throw new ArgumentNullException(nameof(document));
@@ -24,19 +26,21 @@ namespace RevitFamilyImporter.LinkConflict.Services
             if (conflicts == null)
                 throw new ArgumentNullException(nameof(conflicts));
 
-            using (Transaction transaction = new Transaction(document, "Criar avisos de conflitos em link"))
+            using (Transaction transaction = new Transaction(document, "Criar avisos de conflitos"))
             {
                 transaction.Start();
 
-                ElementId duplicateId = sourceView.Duplicate(ViewDuplicateOption.Duplicate);
+                ViewDuplicateOption duplicateMode = withDetailing ? ViewDuplicateOption.WithDetailing : ViewDuplicateOption.Duplicate;
+                if (!sourceView.CanViewBeDuplicated(duplicateMode))
+                    throw new InvalidOperationException("A vista selecionada não permite a cópia necessária para criar os avisos.");
+                ElementId duplicateId = sourceView.Duplicate(duplicateMode);
                 ViewPlan view = document.GetElement(duplicateId) as ViewPlan;
                 if (view == null)
                     throw new InvalidOperationException("Não foi possível criar uma cópia da vista de piso.");
 
-                view.Name = GetUniqueViewName(document, sourceView.Name + " - Conflitos em Link");
+                view.Name = GetUniqueViewName(document, sourceView.Name + " - " + viewSuffix);
 
                 GraphicsStyle markerStyle = GetOrCreateMarkerStyle(document);
-                DeleteExistingMarkers(document, view, markerStyle);
 
                 Level level = view.GenLevel;
                 double viewElevation = level != null ? level.Elevation : 0;
@@ -90,28 +94,12 @@ namespace RevitFamilyImporter.LinkConflict.Services
                 .FirstOrDefault(category => string.Equals(category.Name, MarkerLineStyleName, StringComparison.OrdinalIgnoreCase));
 
             if (markerCategory == null)
-                markerCategory = document.Settings.Categories.NewSubcategory(linesCategory, MarkerLineStyleName);
-
-            markerCategory.LineColor = new Autodesk.Revit.DB.Color(220, 0, 0);
-            markerCategory.SetLineWeight(5, GraphicsStyleType.Projection);
-            return markerCategory.GetGraphicsStyle(GraphicsStyleType.Projection);
-        }
-
-        private static void DeleteExistingMarkers(Document document, ViewPlan view, GraphicsStyle markerStyle)
-        {
-            List<ElementId> ids = new List<ElementId>();
-
-            if (markerStyle != null)
             {
-                ids.AddRange(new FilteredElementCollector(document, view.Id)
-                    .OfClass(typeof(CurveElement))
-                    .Cast<CurveElement>()
-                    .Where(curve => curve.LineStyle != null && curve.LineStyle.Id == markerStyle.Id)
-                    .Select(curve => curve.Id));
+                markerCategory = document.Settings.Categories.NewSubcategory(linesCategory, MarkerLineStyleName);
+                markerCategory.LineColor = new Autodesk.Revit.DB.Color(220, 0, 0);
+                markerCategory.SetLineWeight(5, GraphicsStyleType.Projection);
             }
-
-            if (ids.Count > 0)
-                document.Delete(ids.Distinct().ToList());
+            return markerCategory.GetGraphicsStyle(GraphicsStyleType.Projection);
         }
 
         private static XYZ ResolveHostMarkerPoint(

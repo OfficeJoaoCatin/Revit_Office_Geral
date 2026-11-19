@@ -19,6 +19,8 @@ namespace RevitFamilyImporter.Models
 
         public List<string> Files { get; set; } = new List<string>();
 
+        public List<string> DwgSetupMessages { get; set; } = new List<string>();
+
         public string OutputFolder { get; set; } = string.Empty;
 
         public string LogPath { get; set; } = string.Empty;

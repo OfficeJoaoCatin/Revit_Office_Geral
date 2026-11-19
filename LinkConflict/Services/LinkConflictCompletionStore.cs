@@ -30,6 +30,12 @@ namespace RevitFamilyImporter.LinkConflict.Services
 
         public bool IsCompleted(string conflictKey)
         {
+            if (_completed.Count == 0)
+            {
+                if (string.IsNullOrWhiteSpace(conflictKey))
+                    throw new ArgumentException("Não foi possível identificar o conflito para salvar a marcação.");
+                return false;
+            }
             return _completed.Contains(KeyHash(conflictKey));
         }
 

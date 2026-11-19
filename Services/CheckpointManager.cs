@@ -133,6 +133,8 @@ namespace RevitFamilyImporter.Services
                 ExportDwg = request.ExportDwg,
                 UseDocumentPdfSettings = request.UseDocumentPdfSettings,
                 ForceGlobalDwgSettings = request.ForceGlobalDwgSettings,
+                CopyDwgSetupToProjects = request.CopyDwgSetupToProjects,
+                DwgSetupSourceKey = request.DwgSetupSourceKey,
                 PdfSetupName = request.PdfSettings.Name,
                 DwgSetupName = request.DwgSettings.Name,
                 PdfCombine = request.PdfSettings.Combine,

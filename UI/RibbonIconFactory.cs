@@ -24,7 +24,9 @@ namespace RevitFamilyImporter.UI
         CleanDuplicates,
         SelectIdentical,
         VisibilityInspector,
-        LinkConflicts
+        LinkConflicts,
+        InternalConflicts,
+        DwgConflicts
     }
 
     internal static class RibbonIconFactory
@@ -74,6 +76,12 @@ namespace RevitFamilyImporter.UI
                         break;
                     case RibbonIconKind.LinkConflicts:
                         DrawLinkConflicts(context);
+                        break;
+                    case RibbonIconKind.InternalConflicts:
+                        DrawInternalConflicts(context);
+                        break;
+                    case RibbonIconKind.DwgConflicts:
+                        DrawDwgConflicts(context);
                         break;
                     default:
                         throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
@@ -304,21 +312,42 @@ namespace RevitFamilyImporter.UI
 
         private static void DrawLinkConflicts(DrawingContext context)
         {
-            WpfBrush blue = CreateBrush("#2563EB");
-            WpfBrush orange = CreateBrush("#EA580C");
-            WpfBrush paper = CreateBrush("#FFFFFF");
-            WpfPen border = CreatePen("#174A72", 1.25);
+            // Dois modelos ligados: páginas separadas e elos sobre a área de encontro.
+            context.DrawRoundedRectangle(CreateBrush("#FFFFFF"), CreatePen("#174A72", 1.3), new Rect(3.5, 4.5, 14, 21), 2, 2);
+            context.DrawRoundedRectangle(CreateBrush("#E9F8F3"), CreatePen("#2D8F6F", 1.3), new Rect(14.5, 7.5, 14, 21), 2, 2);
+            context.DrawLine(CreatePen("#9CB6D9", 1), new WpfPoint(6.5, 9), new WpfPoint(13, 9));
+            context.DrawLine(CreatePen("#8BC8B1", 1), new WpfPoint(19, 12), new WpfPoint(25, 12));
+            context.DrawEllipse(null, CreatePen("#2563EB", 2.1), new WpfPoint(12.5, 20), 4.5, 3.2);
+            context.DrawEllipse(null, CreatePen("#EA580C", 2.1), new WpfPoint(19.5, 20), 4.5, 3.2);
+            context.DrawLine(CreatePen("#FFFFFF", 1.1), new WpfPoint(14.7, 20), new WpfPoint(17.3, 20));
+        }
 
-            context.DrawRoundedRectangle(paper, border, new Rect(4, 7, 12, 18), 2, 2);
-            context.DrawRoundedRectangle(CreateBrush("#FFF7ED"), CreatePen(orange, 1.2), new Rect(16, 7, 12, 18), 2, 2);
-            context.DrawLine(CreatePen("#9CB6D9", 1), new WpfPoint(7, 12), new WpfPoint(13, 12));
-            context.DrawLine(CreatePen("#9CB6D9", 1), new WpfPoint(19, 12), new WpfPoint(25, 12));
+        private static void DrawInternalConflicts(DrawingContext context)
+        {
+            // Um único modelo com dois elementos que se cruzam.
+            context.DrawRoundedRectangle(CreateBrush("#FFFFFF"), CreatePen("#174A72", 1.3), new Rect(4, 4, 24, 24), 2, 2);
+            context.DrawLine(CreatePen("#9CB6D9", 1), new WpfPoint(8, 9), new WpfPoint(24, 9));
+            context.DrawRoundedRectangle(CreateBrush("#DCEBFF"), CreatePen("#2563EB", 1.3), new Rect(8, 12, 16, 5.5), 1, 1);
+            context.DrawRoundedRectangle(CreateBrush("#FFF1E6"), CreatePen("#EA580C", 1.3), new Rect(13, 10, 5.5, 14), 1, 1);
+            context.DrawEllipse(CreateBrush("#DC2626"), CreatePen("#FFFFFF", 0.9), new WpfPoint(24, 24), 4.2, 4.2);
+            context.DrawLine(CreatePen("#FFFFFF", 1.3), new WpfPoint(24, 21.9), new WpfPoint(24, 24.6));
+            context.DrawEllipse(CreateBrush("#FFFFFF"), null, new WpfPoint(24, 26.1), 0.7, 0.7);
+        }
 
-            context.DrawEllipse(blue, null, new WpfPoint(13.5, 21), 4, 4);
-            context.DrawEllipse(orange, null, new WpfPoint(18.5, 21), 4, 4);
-            WpfPen warning = CreatePen("#FFFFFF", 1.6);
-            context.DrawLine(warning, new WpfPoint(16, 17.5), new WpfPoint(16, 24.5));
-            context.DrawLine(warning, new WpfPoint(16, 24.5), new WpfPoint(22, 17.5));
+        private static void DrawDwgConflicts(DrawingContext context)
+        {
+            // Folha de desenho com grade 2D e cruzamento entre traçado CAD e elemento.
+            context.DrawRoundedRectangle(CreateBrush("#FFFFFF"), CreatePen("#174A72", 1.3), new Rect(4, 4, 24, 24), 2, 2);
+            WpfPen grid = CreatePen("#B8CBE1", 0.7);
+            context.DrawLine(grid, new WpfPoint(7, 10), new WpfPoint(25, 10));
+            context.DrawLine(grid, new WpfPoint(7, 16), new WpfPoint(25, 16));
+            context.DrawLine(grid, new WpfPoint(7, 22), new WpfPoint(25, 22));
+            context.DrawLine(grid, new WpfPoint(10, 7), new WpfPoint(10, 25));
+            context.DrawLine(grid, new WpfPoint(16, 7), new WpfPoint(16, 25));
+            context.DrawLine(grid, new WpfPoint(22, 7), new WpfPoint(22, 25));
+            context.DrawLine(CreatePen("#2563EB", 2.5), new WpfPoint(7.5, 22.5), new WpfPoint(23.5, 8.5));
+            context.DrawLine(CreatePen("#EA580C", 2.5), new WpfPoint(8.5, 9), new WpfPoint(23, 23));
+            context.DrawEllipse(CreateBrush("#DC2626"), CreatePen("#FFFFFF", 1), new WpfPoint(16, 16), 2.6, 2.6);
         }
 
         private static void DrawSelectIdentical(DrawingContext context)

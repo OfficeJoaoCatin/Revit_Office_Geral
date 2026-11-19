@@ -26,14 +26,13 @@ namespace RevitFamilyImporter.DwgClash.Views
         private Dictionary<string, List<DwgClashResult>> _completionGroups;
 
         public DwgClashResultsWindow(DwgClashSettings settings, DwgClashReport report,
-            HighlightService highlightService, DwgClashExternalEventHandler eventHandler)
+            DwgClashExternalEventHandler eventHandler)
         {
             InitializeComponent();
             MaxWidth = SystemParameters.WorkArea.Width;
             MaxHeight = SystemParameters.WorkArea.Height;
             Settings = settings;
             Report = report;
-            HighlightService = highlightService;
             _eventHandler = eventHandler;
             ResultsGrid.ItemsSource = report.Results;
             _completionGroups = report.Results.Where(item => !string.IsNullOrWhiteSpace(item.CompletionKey))
@@ -44,7 +43,7 @@ namespace RevitFamilyImporter.DwgClash.Views
             UpdateSummary();
             StatusTextBlock.Text = report.Results.Count == 0
                 ? "Nenhum conflito encontrado com os filtros selecionados."
-                : "Selecione uma linha para navegar, selecionar ou destacar o conflito.";
+                : "Selecione uma linha para navegar ou crie avisos em uma cópia da planta.";
         }
 
         private void InitializeCompletionMemory()
@@ -59,7 +58,7 @@ namespace RevitFamilyImporter.DwgClash.Views
                 _completionStore = new LinkConflictCompletionStore(
                     GetModelIdentity(document), Settings.View.UniqueId, Settings.ImportInstance.UniqueId, root);
                 foreach (DwgClashResult result in Report.Results)
-                    result.IsCompleted = _completionStore.IsCompleted(result.CompletionKey);
+                    result.IsCompleted = DwgCompletionMigration.IsCompleted(_completionStore, result);
             }
             catch (Exception ex)
             {
@@ -131,7 +130,6 @@ namespace RevitFamilyImporter.DwgClash.Views
 
         public DwgClashSettings Settings { get; }
         public DwgClashReport Report { get; }
-        public HighlightService HighlightService { get; }
 
         private DwgClashResult SelectedResult => ResultsGrid.SelectedItem as DwgClashResult;
 
@@ -173,14 +171,9 @@ namespace RevitFamilyImporter.DwgClash.Views
             SelectButton_Click(sender, e);
         }
 
-        private void HighlightButton_Click(object sender, RoutedEventArgs e)
+        private void CreateMarkersButton_Click(object sender, RoutedEventArgs e)
         {
-            _eventHandler.Request(DwgClashRequest.Highlight);
-        }
-
-        private void ClearHighlightButton_Click(object sender, RoutedEventArgs e)
-        {
-            _eventHandler.Request(DwgClashRequest.ClearHighlights);
+            _eventHandler.Request(DwgClashRequest.CreateViewMarkers);
         }
 
         private void ExportCsvButton_Click(object sender, RoutedEventArgs e)

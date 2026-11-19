@@ -6,7 +6,7 @@ using RevitFamilyImporter.Utils;
 
 namespace RevitFamilyImporter.Export
 {
-    public class ExportWorker
+    public class ExportWorker : IDisposable
     {
         private readonly PdfExporter _pdfExporter = new PdfExporter();
         private readonly DwgExporter _dwgExporter = new DwgExporter();
@@ -59,5 +59,7 @@ namespace RevitFamilyImporter.Export
                 _heartbeat.Beat();
             }
         }
+
+        public void Dispose() { _dwgExporter.Dispose(); }
     }
 }

@@ -51,8 +51,7 @@
             <Button Content="Anterior" Padding="12,6" Margin="0,0,6,4" Click="PreviousButton_Click"/>
             <Button Content="Próximo" Padding="12,6" Margin="0,0,6,4" Click="NextButton_Click"/>
             <Button Content="Selecionar / enquadrar" Padding="12,6" Margin="0,0,6,4" Click="SelectButton_Click"/>
-            <Button Content="Destacar" Padding="12,6" Margin="0,0,6,4" Click="HighlightButton_Click"/>
-            <Button Content="Limpar destaques" Padding="12,6" Margin="0,0,6,4" Click="ClearHighlightButton_Click"/>
+            <Button Content="Criar avisos na planta" Padding="12,6" Margin="0,0,6,4" Click="CreateMarkersButton_Click"/>
             <Button Content="Exportar CSV" Padding="12,6" Margin="0,0,6,4" Click="ExportCsvButton_Click"/>
             <Button Content="Exportar JSON" Padding="12,6" Margin="0,0,6,4" Click="ExportJsonButton_Click"/>
             <Button Content="Fechar" Padding="18,6" Margin="0,0,0,4" Click="CloseButton_Click"/>

@@ -41,7 +41,7 @@ namespace RevitFamilyImporter.LinkConflict.Services
         }
 
         public LinkConflictReport Analyze(Document hostDocument, RevitLinkInstance linkInstance, IReadOnlyCollection<LinkedCategoryOption> categories,
-            Action<string, int, int> progress = null, CancellationToken cancellationToken = default)
+            Action<string, int, int> progress = null, CancellationToken cancellationToken = default, bool diagnosticMode = false, int diagnosticStartPosition = 1)
         {
             if (hostDocument == null)
                 throw new ArgumentNullException(nameof(hostDocument));
@@ -54,6 +54,7 @@ namespace RevitFamilyImporter.LinkConflict.Services
             if (linkedDocument == null)
                 throw new InvalidOperationException("O modelo vinculado está descarregado ou inacessível.");
 
+            var stopwatch = Stopwatch.StartNew();
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Invoke("Coletando elementos das categorias selecionadas...", 0, 0);
             List<ElementFilter> categoryFilters = categories
@@ -76,6 +77,35 @@ namespace RevitFamilyImporter.LinkConflict.Services
                 CategoryName = string.Join(", ", categories.Select(category => category.Name))
             };
 
+            var diagnostics = diagnosticMode ? new LinkConflictDiagnostics() : null;
+            var coverage = new UnverifiedCoverage();
+            string diagnosticStopReason = string.Empty;
+            (int startIndex, int analysisLimit) = diagnosticMode
+                ? LinkConflictDiagnostics.GetSampleRange(linkedIds.Count, diagnosticStartPosition)
+                : (0, linkedIds.Count);
+            int analysisCount = analysisLimit - startIndex;
+            ElementFilter dwgHostFilter = CreateDwgHostFilter(hostDocument);
+            ElementFilter cameraHostFilter = CreateInternalCameraFilter(hostDocument, cancellationToken);
+            progress?.Invoke("Preparando busca de elementos físicos...", 0, 0);
+            var curvePreparation = Stopwatch.StartNew();
+            ElementFilter curveHostFilter = CreateVerifiedCurveFilter(hostDocument, cancellationToken, out int excludedCurveCount, out bool curveScanPartial, out bool curveScanFailed);
+            curvePreparation.Stop();
+            var emptyRegions = new EmptyRegionCache();
+            bool? ProbeEmptyRegion(RegionBounds region)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var outline = new Outline(new XYZ(region.MinX, region.MinY, region.MinZ), new XYZ(region.MaxX, region.MaxY, region.MaxZ));
+                var collector = new FilteredElementCollector(hostDocument)
+                    .WhereElementIsNotElementType()
+                    .WherePasses(new ElementClassFilter(typeof(RevitLinkInstance), true))
+                    .WherePasses(new BoundingBoxIntersectsFilter(outline, BoundingBoxToleranceFeet));
+                if (dwgHostFilter != null) collector.WherePasses(dwgHostFilter);
+                if (cameraHostFilter != null) collector.WherePasses(cameraHostFilter);
+                if (curveHostFilter != null) collector.WherePasses(curveHostFilter);
+                ElementId first = collector.FirstElementId();
+                if (first == null) return null;
+                return first == ElementId.InvalidElementId;
+            }
             Transform linkTransform = linkInstance.GetTotalTransform();
             Options geometryOptions = new Options
             {
@@ -83,144 +113,293 @@ namespace RevitFamilyImporter.LinkConflict.Services
                 IncludeNonVisibleObjects = true,
                 DetailLevel = ViewDetailLevel.Fine
             };
-            HashSet<string> conflictKeys = new HashSet<string>(StringComparer.Ordinal);
+            var conflictKeys = new HashSet<(int Category, int LinkedOwner, int HostOwner)>();
             // Limite evita reter indefinidamente a geometria de um projeto grande.
             const int maxCachedHosts = 1024;
             var hostCache = new BoundedLruCache<int, HostGeometry>(maxCachedHosts);
-            var stopwatch = Stopwatch.StartNew();
+            // Busca aprofundada é reservada a famílias que não puderam ser verificadas.
+            var nestedHostCache = new BoundedLruCache<int, NestedGeometry>(256);
+            var ownerCache = new BoundedLruCache<int, Element>(8192);
+            var metadataCache = new BoundedLruCache<int, ElementMetadata>(8192);
             long nextProgressMilliseconds = 0;
             long pairsChecked = 0;
+            long geometryTicks = 0, searchTicks = 0, comparisonTicks = 0;
+            int prefiltered = 0;
+            long rejectedNonIntersections = 0, geometryRequests = 0, geometryCacheMisses = 0;
+            long currentComparisonStart = 0, currentComparisonGeometryStart = 0;
             void ReportAnalysisProgress(int index)
             {
                 if (progress == null || stopwatch.ElapsedMilliseconds < nextProgressMilliseconds) return;
                 nextProgressMilliseconds = stopwatch.ElapsedMilliseconds + 1000;
-                progress($"Analisando elementos do link: {pairsChecked:N0} pares verificados; {report.Conflicts.Count:N0} avisos", index, linkedIds.Count);
+                double searchSeconds = (double)searchTicks / Stopwatch.Frequency;
+                double geometrySeconds = (double)geometryTicks / Stopwatch.Frequency;
+                long liveComparisonTicks = comparisonTicks;
+                if (currentComparisonStart != 0)
+                    liveComparisonTicks += Stopwatch.GetTimestamp() - currentComparisonStart - (geometryTicks - currentComparisonGeometryStart);
+                double comparisonSeconds = (double)Math.Max(0, liveComparisonTicks) / Stopwatch.Frequency;
+                progress($"{(diagnosticMode ? "Diagnóstico parcial" : "Analisando elementos do link")}: {pairsChecked:N0} pares; {(diagnostics?.ReportedConflicts ?? report.Conflicts.Count):N0} conflitos físicos confirmados. " +
+                    $"Não verificados: link sem sólidos {coverage.LinkedWithoutSolids:N0}; pares sem sólidos no hospedeiro {coverage.PairsWithoutHostSolids:N0}; geometria incompleta {coverage.PairsWithIncompleteGeometry:N0}; falhas geométricas {coverage.PairsWithBooleanFailure:N0}. " +
+                    $"Sem interseção {rejectedNonIntersections:N0}; extrações host {geometryCacheMisses:N0}/{geometryRequests:N0}; regiões vazias reaproveitadas {emptyRegions.EmptyRegionReuses:N0}. " +
+                    $"Tempos acumulados: busca {searchSeconds:N0}s; geometria {geometrySeconds:N0}s; comparação {comparisonSeconds:N0}s", index - startIndex, analysisCount);
             }
 
-            for (int linkedIndex = 0; linkedIndex < linkedIds.Count; linkedIndex++)
+            for (int linkedIndex = startIndex; linkedIndex < analysisLimit; linkedIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (diagnostics != null && LinkConflictDiagnostics.ShouldStop(pairsChecked, stopwatch.Elapsed, out diagnosticStopReason)) break;
                 ReportAnalysisProgress(linkedIndex);
                 Element linkedElement = linkedDocument.GetElement(linkedIds[linkedIndex]);
                 if (!IsModelElement(linkedElement)) continue;
                 report.LinkedElementCount++;
-                List<Solid> linkedSolids = GetTransformedSolids(linkedElement, geometryOptions, linkTransform);
-                var linkedBoxes = new Dictionary<Solid, BoundingBoxXYZ>();
+                // A caixa do elemento envolve a geometria do modelo. Se não estiver disponível,
+                // for inválida ou não puder ser consultada, preserva-se a análise completa.
+                long stageStart = Stopwatch.GetTimestamp();
+                PreliminaryCandidates preliminary = GetPreliminaryCandidates(hostDocument, linkedElement, linkTransform, dwgHostFilter, cameraHostFilter, curveHostFilter, emptyRegions, ProbeEmptyRegion, cancellationToken);
+                searchTicks += Stopwatch.GetTimestamp() - stageStart;
+                if (preliminary?.Ids != null && preliminary.Ids.Count == 0) { prefiltered++; continue; }
+
+                stageStart = Stopwatch.GetTimestamp();
+                HostGeometry linkedGeometry = ExtractGeometry(linkedElement, geometryOptions, linkTransform, cancellationToken);
+                List<Solid> linkedSolids = linkedGeometry.Solids;
+                var linkedBoxes = new Dictionary<Solid, Outline>();
+                bool linkedUnresolved = linkedGeometry.HasUnresolvedBounds;
                 List<Outline> linkedPartOutlines = linkedSolids.Count > 0
-                    ? GetSolidOutlines(linkedSolids)
-                    : GetGeometryOutlines(linkedElement, geometryOptions, linkTransform);
+                    ? GetSolidOutlines(linkedElement, linkedSolids, linkTransform, out linkedUnresolved)
+                    : linkedGeometry.Outlines;
+                diagnostics?.RecordEmptySolids(linkedGeometry.EmptySolidOccurrences, true);
                 Outline outline = GetCombinedOutline(linkedPartOutlines);
+                geometryTicks += Stopwatch.GetTimestamp() - stageStart;
+                if (outline == null || linkedUnresolved)
+                {
+                    report.UnboundedLinkedElementCount++;
+                    diagnostics?.RecordUnboundedLinked(linkedElement.Id.IntegerValue, linkedElement.Category?.Name ?? "(sem categoria)");
+                    coverage.RecordLinkedBounds(linkedElement.Id.IntegerValue, linkedElement.Category?.Name ?? "(sem categoria)");
+                }
+                if (linkedSolids.Count == 0)
+                {
+                    coverage.RecordLinkedWithoutSolids(linkedElement.Id.IntegerValue, linkedElement.Category?.Name ?? "(sem categoria)");
+                    if (!diagnosticMode) continue;
+                }
                 if (outline == null)
                     continue;
+                if (diagnostics != null && linkedSolids.Count == 0)
+                {
+                    XYZ minimum = outline.MinimumPoint, maximum = outline.MaximumPoint;
+                    string family = string.Empty, type = string.Empty;
+                    try
+                    {
+                        family = RevitText.FamilyName(linkedElement.Document, linkedElement);
+                        type = RevitText.ElementTypeName(linkedElement.Document, linkedElement);
+                    }
+                    catch { /* A coleta de metadados não pode interromper o diagnóstico. */ }
+                    diagnostics.RecordLinkedBounds(linkedElement.Id.IntegerValue, family, type,
+                        maximum.X - minimum.X, maximum.Y - minimum.Y, maximum.Z - minimum.Z, linkedPartOutlines.Count);
+                }
 
-                List<Element> hostCandidates = new FilteredElementCollector(hostDocument)
-                    .WhereElementIsNotElementType()
-                    .WherePasses(new BoundingBoxIntersectsFilter(outline, BoundingBoxToleranceFeet))
-                    .Where(IsModelElement)
-                    .Where(element => !(element is RevitLinkInstance))
-                    .ToList();
+                stageStart = Stopwatch.GetTimestamp();
+                bool completeParts = linkedSolids.Count == 0 || linkedPartOutlines.Count == linkedSolids.Count;
+                List<Element> hostCandidates = FindHostCandidates(hostDocument, outline, linkedPartOutlines,
+                    completeParts, preliminary, dwgHostFilter, cameraHostFilter, curveHostFilter, cancellationToken);
+                searchTicks += Stopwatch.GetTimestamp() - stageStart;
 
                 report.CandidateHostElementCount += hostCandidates.Count;
+                stageStart = Stopwatch.GetTimestamp();
+                long geometryBeforeCandidates = geometryTicks;
+                currentComparisonStart = stageStart;
+                currentComparisonGeometryStart = geometryBeforeCandidates;
+                Element linkedOwner = hostCandidates.Count == 0 ? null : GetTopLevelFamilyInstance(linkedElement);
+                int categoryId = linkedElement.Category.Id.IntegerValue;
+                ElementMetadata linkedMetadata = null;
 
                 foreach (Element hostElement in hostCandidates)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (diagnostics != null && LinkConflictDiagnostics.ShouldStop(pairsChecked, stopwatch.Elapsed, out diagnosticStopReason)) break;
                     ReportAnalysisProgress(linkedIndex);
-                    string key = GetConflictKey(linkedElement, hostElement);
+                    int hostId = hostElement.Id.IntegerValue;
+                    Element hostOwner = ownerCache.GetOrAdd(hostId, () => GetTopLevelFamilyInstance(hostElement));
+                    var key = (categoryId, linkedOwner.Id.IntegerValue, hostOwner.Id.IntegerValue);
                     if (!conflictKeys.Add(key))
                         continue;
-                    int hostId = hostElement.Id.IntegerValue;
-                    HostGeometry hostGeometry = hostCache.GetOrAdd(hostId,
-                        () => new HostGeometry { Solids = GetSolids(hostElement, geometryOptions) });
-                    List<Solid> hostSolids = hostGeometry.Solids;
-                    pairsChecked++;
-                    IntersectionData intersection = GetIntersectionData(linkedSolids, hostSolids,
-                        linkedBoxes, hostGeometry.SolidBoxes, cancellationToken);
-
-                    if (intersection.Volume > IntersectionToleranceCubicFeet)
+                    geometryRequests++;
+                    bool cacheMiss = false;
+                    HostGeometry hostGeometry = hostCache.GetOrAdd(hostId, () =>
                     {
-                        report.Conflicts.Add(CreateConflictItem(
-                            linkedElement,
-                            hostElement,
-                            intersection.Volume,
-                            intersection.Point ?? GetOutlineCenter(outline),
-                            false));
+                        geometryCacheMisses++;
+                        cacheMiss = true;
+                        long geometryStart = Stopwatch.GetTimestamp();
+                        try
+                        {
+                            HostGeometry extracted = ExtractGeometry(hostElement, geometryOptions, Transform.Identity, cancellationToken);
+                            diagnostics?.RecordEmptySolids(extracted.EmptySolidOccurrences, false);
+                            return extracted;
+                        }
+                        finally { geometryTicks += Stopwatch.GetTimestamp() - geometryStart; }
+                    });
+                    diagnostics?.RecordHostRequest(hostId, cacheMiss);
+                    pairsChecked++;
+                    if (diagnostics != null && (linkedSolids.Count == 0 || hostGeometry.Solids.Count == 0))
+                        diagnostics.RecordPair(linkedElement.Id.IntegerValue, linkedElement.Category?.Name ?? "(sem categoria)", linkedElement.GetType().Name,
+                            hostId, hostElement.Category?.Name ?? "(sem categoria)", hostElement.Category?.Id?.IntegerValue ?? 0,
+                            hostElement.GetType().Name, linkedSolids.Count == 0, hostGeometry.Solids.Count == 0);
+                    IntersectionData intersection = linkedSolids.Count == 0 || hostGeometry.Solids.Count == 0
+                        ? new IntersectionData()
+                        : GetIntersectionData(linkedSolids, hostGeometry.Solids, linkedBoxes, hostGeometry.SolidBoxes, cancellationToken);
+                    int effectiveHostSolidCount = hostGeometry.Solids.Count;
+                    bool capturePairDetails = coverage.CanAddDiagnosticDetail;
+                    NestedGeometry nestedDiagnostic = null;
+                    IntersectionData nestedIntersection = null;
+                    if (intersection.Volume <= IntersectionToleranceCubicFeet && linkedSolids.Count > 0 &&
+                        (hostGeometry.Solids.Count == 0 || !hostGeometry.IsComplete) && hostElement is FamilyInstance hostFamily)
+                    {
+                        nestedDiagnostic = nestedHostCache.GetOrAdd(hostId, () =>
+                        {
+                            var found = new NestedGeometry();
+                            long started = Stopwatch.GetTimestamp();
+                            try { CollectSubcomponentSolids(hostFamily, geometryOptions, Transform.Identity, found.Solids, cancellationToken, true, capturePairDetails ? found.Details : null); }
+                            finally { geometryTicks += Stopwatch.GetTimestamp() - started; }
+                            return found;
+                        });
+                        var nestedSolids = nestedDiagnostic.Solids;
+                        if (nestedSolids.Count > 0)
+                        {
+                            effectiveHostSolidCount = Math.Max(effectiveHostSolidCount, nestedSolids.Count);
+                            nestedIntersection = GetIntersectionData(linkedSolids, nestedSolids, linkedBoxes,
+                                new Dictionary<Solid, Outline>(), cancellationToken, true);
+                            if (nestedIntersection.Volume > IntersectionToleranceCubicFeet) intersection = nestedIntersection;
+                            else intersection.BooleanFailed |= nestedIntersection.BooleanFailed;
+                        }
+                    }
+                    PhysicalPairOutcome outcome = ConfirmedClashDecision.Classify(intersection.Volume, IntersectionToleranceCubicFeet,
+                            linkedSolids.Count, effectiveHostSolidCount, linkedGeometry.IsComplete, hostGeometry.IsComplete && effectiveHostSolidCount == hostGeometry.Solids.Count, intersection.BooleanFailed);
+                    if (outcome != PhysicalPairOutcome.Confirmed)
+                    {
+                        if (outcome == PhysicalPairOutcome.NoIntersection) rejectedNonIntersections++;
+                        else
+                        {
+                            coverage.RecordPair(outcome, linkedElement.Id.IntegerValue, linkedElement.Category?.Name ?? "(sem categoria)",
+                                hostId, hostElement.Category?.Name ?? "(sem categoria)",
+                                !capturePairDetails ? null : $"sólidos: link {linkedSolids.Count}, hospedeiro {hostGeometry.Solids.Count}, aninhados {nestedDiagnostic?.Solids.Count ?? 0}; " +
+                                $"comparações entre sólidos: caixas sobrepostas {intersection.OverlappingBoxes}, booleanas {intersection.BooleanAttempts}, falha {intersection.BooleanFailed}; " +
+                                $"busca aninhada: caixas sobrepostas {nestedIntersection?.OverlappingBoxes ?? 0}, booleanas {nestedIntersection?.BooleanAttempts ?? 0}, falha {nestedIntersection?.BooleanFailed ?? false}. " +
+                                $"Caixa do primeiro sólido do link: {DescribeSolidBounds(linkedSolids.FirstOrDefault())}. " +
+                                $"Subcomponentes: {(nestedDiagnostic == null ? "não consultados" : nestedDiagnostic.Details.Count == 0 ? "nenhum retornado" : string.Join(" | ", nestedDiagnostic.Details))}");
+                            if (hostGeometry.HasUnresolvedBounds)
+                            {
+                                report.UnboundedHostPairCount++;
+                                diagnostics?.RecordUnboundedHost(hostId, hostElement.Category?.Name ?? "(sem categoria)");
+                                coverage.RecordHostBounds(hostId, hostElement.Category?.Name ?? "(sem categoria)");
+                            }
+                        }
+                        conflictKeys.Remove(key);
                         continue;
                     }
-
-                    if (hostGeometry.Outlines == null)
-                        hostGeometry.Outlines = hostSolids.Count > 0
-                            ? GetSolidOutlines(hostSolids)
-                            : GetGeometryOutlines(hostElement, geometryOptions, Transform.Identity);
-                    Outline overlap = FindPartOverlap(linkedPartOutlines, hostGeometry.Outlines);
-                    if (overlap != null)
-                    {
-                        report.Conflicts.Add(CreateConflictItem(
-                            linkedElement,
-                            hostElement,
-                            0,
-                            GetOutlineCenter(overlap),
-                            true));
-                    }
+                    XYZ point = intersection.Point ?? GetOutlineCenter(outline);
+                    if (diagnostics != null)
+                        diagnostics.ReportedConflicts++;
                     else
                     {
-                        conflictKeys.Remove(key);
+                        if (linkedMetadata == null) linkedMetadata = new ElementMetadata(linkedElement);
+                        ElementMetadata hostMetadata = metadataCache.GetOrAdd(hostId, () => new ElementMetadata(hostElement));
+                        report.Conflicts.Add(CreateConflictItem(linkedElement, hostElement, linkedOwner, hostOwner,
+                            linkedMetadata, hostMetadata, intersection.Volume, point, intersection.IsPartial));
                     }
                 }
+                comparisonTicks += Stopwatch.GetTimestamp() - stageStart - (geometryTicks - geometryBeforeCandidates);
+                currentComparisonStart = 0;
+                if (!string.IsNullOrEmpty(diagnosticStopReason)) break;
             }
 
+            stopwatch.Stop();
+            report.AnalysisDuration = stopwatch.Elapsed;
+            report.GeometryDuration = TimeSpan.FromSeconds((double)geometryTicks / Stopwatch.Frequency);
+            report.SearchDuration = TimeSpan.FromSeconds((double)searchTicks / Stopwatch.Frequency);
+            report.ComparisonDuration = TimeSpan.FromSeconds((double)comparisonTicks / Stopwatch.Frequency);
+            report.PrefilteredLinkedElementCount = prefiltered;
+            report.EmptyRegionReuses = emptyRegions.EmptyRegionReuses;
+            report.EmptyRegionQueries = emptyRegions.RegionQueries;
+            report.EmptyRegionSkips = emptyRegions.EmptyRegionSkips;
+            report.ExcludedCurveCount = excludedCurveCount;
+            report.CurveScanPartial = curveScanPartial;
+            report.CurveScanFailed = curveScanFailed;
+            report.CurvePreparationDuration = curvePreparation.Elapsed;
+            report.ComparedPairCount = pairsChecked;
+            report.HasUnverified = coverage.HasIssues;
+            report.UnverifiedSummary = coverage.HasIssues ? coverage.Format() : string.Empty;
             cancellationToken.ThrowIfCancellationRequested();
-            progress?.Invoke("Análise concluída.", linkedIds.Count, linkedIds.Count);
+            if (diagnostics != null)
+            {
+                if (string.IsNullOrEmpty(diagnosticStopReason))
+                    diagnosticStopReason = linkedIds.Count > analysisLimit
+                        ? $"Limite de {LinkConflictDiagnostics.MaxLinkedElements:N0} elementos do link atingido."
+                        : "Todos os elementos selecionados foram percorridos.";
+                report.DiagnosticText = diagnostics.Format(report.LinkName, report.CategoryName, linkedIds.Count,
+                    report.LinkedElementCount, diagnosticStartPosition, pairsChecked, report.AnalysisDuration, report.SearchDuration,
+                    report.GeometryDuration, report.ComparisonDuration, diagnosticStopReason,
+                    report.EmptyRegionQueries, report.EmptyRegionReuses, report.EmptyRegionSkips,
+                    report.ExcludedCurveCount, report.CurveScanPartial, report.CurvePreparationDuration, report.CurveScanFailed) +
+                    (coverage.HasIssues ? "\n" + coverage.Format(20) : "");
+            }
+            progress?.Invoke("Análise concluída.", analysisCount, analysisCount);
             for (int index = 0; index < report.Conflicts.Count; index++)
                 report.Conflicts[index].Number = index + 1;
 
             return report;
         }
 
-        private sealed class HostGeometry
+        internal sealed class HostGeometry
         {
             public List<Solid> Solids { get; set; }
+            public bool IsComplete { get; set; }
+            public bool HasUnresolvedBounds { get; set; }
+            public int EmptySolidOccurrences { get; set; }
             public List<Outline> Outlines { get; set; }
-            public Dictionary<Solid, BoundingBoxXYZ> SolidBoxes { get; } = new Dictionary<Solid, BoundingBoxXYZ>();
+            public Dictionary<Solid, Outline> SolidBoxes { get; } = new Dictionary<Solid, Outline>();
         }
 
-        private static LinkConflictItem CreateConflictItem(
-            Element linkedElement,
-            Element hostElement,
-            double volume,
-            XYZ markerPoint,
-            bool approximate)
+        private sealed class NestedGeometry
         {
-            Element linkedOwner = GetTopLevelFamilyInstance(linkedElement);
-            Element hostOwner = GetTopLevelFamilyInstance(hostElement);
+            public List<Solid> Solids { get; } = new List<Solid>();
+            public List<string> Details { get; } = new List<string>();
+        }
+
+        private sealed class ElementMetadata
+        {
+            public readonly string Name, Family, Type, Category;
+            public ElementMetadata(Element element)
+            {
+                Name = RevitText.ElementName(element);
+                Family = RevitText.FamilyName(element.Document, element);
+                Type = RevitText.ElementTypeName(element.Document, element);
+                Category = element.Category?.Name ?? string.Empty;
+            }
+        }
+
+        private static LinkConflictItem CreateConflictItem(Element linkedElement, Element hostElement,
+            Element linkedOwner, Element hostOwner, ElementMetadata linked, ElementMetadata host,
+            double volume, XYZ markerPoint, bool partialVolume)
+        {
             return new LinkConflictItem
             {
                 CompletionKey = $"{linkedElement.Category?.Id.IntegerValue}|{linkedOwner.UniqueId}|{hostOwner.UniqueId}",
                 LinkedElementId = linkedElement.Id.IntegerValue,
-                LinkedElementName = RevitText.ElementName(linkedElement),
-                LinkedFamily = RevitText.FamilyName(linkedElement.Document, linkedElement),
-                LinkedType = RevitText.ElementTypeName(linkedElement.Document, linkedElement),
-                LinkedCategory = linkedElement.Category?.Name ?? string.Empty,
+                LinkedElementName = linked.Name,
+                LinkedFamily = linked.Family,
+                LinkedType = linked.Type,
+                LinkedCategory = linked.Category,
                 HostElementId = hostElement.Id.IntegerValue,
-                HostElementName = RevitText.ElementName(hostElement),
-                HostFamily = RevitText.FamilyName(hostElement.Document, hostElement),
-                HostType = RevitText.ElementTypeName(hostElement.Document, hostElement),
-                HostCategory = hostElement.Category?.Name ?? string.Empty,
+                HostElementName = host.Name,
+                HostFamily = host.Family,
+                HostType = host.Type,
+                HostCategory = host.Category,
                 IntersectionVolumeCubicMeters = volume * 0.028316846592,
+                IsPartialVolume = partialVolume,
                 MarkerPoint = markerPoint,
-                IsApproximate = approximate
+                IsApproximate = false
             };
         }
 
-        private static string GetConflictKey(Element linkedElement, Element hostElement)
-        {
-            Element linkedOwner = GetTopLevelFamilyInstance(linkedElement);
-            Element hostOwner = GetTopLevelFamilyInstance(hostElement);
-            // Preserve o resultado por categoria quando elementos aninhados compartilham um pai.
-            return $"{linkedElement.Category?.Id.IntegerValue}:{linkedOwner.Id.IntegerValue}:{hostOwner.Id.IntegerValue}";
-        }
-
-        private static Element GetTopLevelFamilyInstance(Element element)
+        internal static Element GetTopLevelFamilyInstance(Element element)
         {
             Element current = element;
             while (current is FamilyInstance familyInstance && familyInstance.SuperComponent != null)
@@ -233,125 +412,353 @@ namespace RevitFamilyImporter.LinkConflict.Services
         {
             return element != null &&
                    element.Category != null &&
-                   element.Category.CategoryType == CategoryType.Model;
+                   element.Category.CategoryType == CategoryType.Model &&
+                   !NonPhysicalDefinitionFilter.IsExcluded(element);
         }
 
-        private static List<Solid> GetTransformedSolids(Element element, Options options, Transform transform)
+        internal static bool IsEligibleHost(Element element)
         {
-            List<Solid> solids = new List<Solid>();
+            if (!IsModelElement(element) || HostCandidateTypeFilter.IsExcluded(element)) return false;
+            if (!(element is ImportInstance)) return true;
+            if (DwgNameMatcher.IsDwgName(element.Category?.Name) || DwgNameMatcher.IsDwgName(RevitText.ElementName(element))) return false;
             try
             {
-                GeometryElement geometry = element.get_Geometry(options);
-                if (geometry == null)
-                    return solids;
-
-                foreach (GeometryObject geometryObject in geometry)
-                    AddSolids(geometryObject, solids, transform);
+                ElementId typeId = element.GetTypeId();
+                return !DwgNameMatcher.IsDwgName(element.Document.GetElement(typeId)?.Name);
             }
-            catch
-            {
-                // Alguns elementos de link não expõem geometria completa; eles são ignorados.
-            }
-
-            return solids;
+            catch { return true; } // Não descarta formatos que não puder identificar.
         }
 
-        private static List<Solid> GetSolids(Element element, Options options)
+        private static ElementFilter CreateVerifiedCurveFilter(Document hostDocument, CancellationToken cancellationToken,
+            out int excludedCount, out bool stoppedEarly, out bool scanFailed)
         {
-            List<Solid> solids = new List<Solid>();
+            excludedCount = 0;
+            stoppedEarly = false;
+            scanFailed = false;
             try
             {
-                GeometryElement geometry = element.get_Geometry(options);
-                if (geometry == null)
-                    return solids;
-
-                foreach (GeometryObject geometryObject in geometry)
-                    AddSolids(geometryObject, solids, Transform.Identity);
+                // A API usa Invalid/invertido para COLETAR curvas. Nunca usamos esse filtro
+                // para excluir diretamente: cada candidato é verificado antes de usar seu ID.
+                var stopwatch = Stopwatch.StartNew();
+                var collector = new FilteredElementCollector(hostDocument).WhereElementIsNotElementType()
+                    .WherePasses(new CurveElementFilter(CurveElementType.Invalid, true));
+                List<ElementId> ids = VerifiedCurveCandidates.Collect(collector, 10000, 10000,
+                    () => stopwatch.Elapsed >= TimeSpan.FromSeconds(2), cancellationToken, out stoppedEarly);
+                if (ids.Count == 0) return null;
+                ElementFilter filter = new ExclusionFilter(ids);
+                excludedCount = ids.Count;
+                return filter;
             }
-            catch
-            {
-                // O teste de interferência deve continuar mesmo quando um candidato falha.
-            }
-
-            return solids;
+            catch (OperationCanceledException) { throw; }
+            catch { excludedCount = 0; stoppedEarly = false; scanFailed = true; return null; }
         }
 
-        private static void AddSolids(GeometryObject geometryObject, ICollection<Solid> solids, Transform transform)
+        private static ElementFilter CreateInternalCameraFilter(Document hostDocument, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var ids = new List<ElementId>();
+                var cameras = new FilteredElementCollector(hostDocument)
+                    .WhereElementIsNotElementType()
+                    .OfCategory(BuiltInCategory.OST_Cameras);
+                foreach (Element camera in cameras)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (camera.GetType() == typeof(Element) && HostCandidateTypeFilter.IsExcluded(camera)) ids.Add(camera.Id);
+                }
+                return ids.Count == 0 ? null : new ExclusionFilter(ids);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return null; } // A exclusão por tipo no hospedeiro continua em vigor.
+        }
+
+        private static ElementFilter CreateDwgHostFilter(Document hostDocument)
+        {
+            try
+            {
+                var categories = new List<ElementId>();
+                foreach (Category category in hostDocument.Settings.Categories)
+                    if (category != null && DwgNameMatcher.IsDwgName(category.Name)) categories.Add(category.Id);
+                if (categories.Count == 0) return null;
+                // A ∨ B: mantém tudo que não é ImportInstance ou não pertence às categorias DWG.
+                return new LogicalOrFilter(new List<ElementFilter>
+                {
+                    new ElementClassFilter(typeof(ImportInstance), true),
+                    new ElementMulticategoryFilter(categories, true)
+                });
+            }
+            catch { return null; } // O filtro por elemento continua em vigor.
+        }
+
+        private sealed class PreliminaryCandidates
+        {
+            public Outline Bounds { get; set; }
+            // Null significa que o limite foi excedido ou a consulta não é reutilizável.
+            public List<ElementId> Ids { get; set; }
+        }
+
+        private static PreliminaryCandidates GetPreliminaryCandidates(Document hostDocument, Element linkedElement,
+            Transform linkTransform, ElementFilter dwgHostFilter, ElementFilter cameraHostFilter, ElementFilter curveHostFilter, EmptyRegionCache emptyRegions,
+            Func<RegionBounds, bool?> probeEmptyRegion, CancellationToken cancellationToken)
+        {
+            const int maxReusableCandidates = 256;
+            try
+            {
+                BoundingBoxXYZ box = linkedElement.get_BoundingBox(null);
+                if (box == null) return null;
+                Outline outline = LinkBoundingBoxes.CreateOutline(box, linkTransform);
+                if (outline == null || outline.IsEmpty) return null;
+                XYZ min = outline.MinimumPoint, max = outline.MaximumPoint;
+                var bounds = new RegionBounds(min.X, min.Y, min.Z, max.X, max.Y, max.Z);
+                if (emptyRegions.CanSkip(bounds, probeEmptyRegion))
+                    return new PreliminaryCandidates { Bounds = outline, Ids = new List<ElementId>() };
+                var ids = new List<ElementId>();
+                var collector = new FilteredElementCollector(hostDocument)
+                    .WhereElementIsNotElementType()
+                    .WherePasses(new ElementClassFilter(typeof(RevitLinkInstance), true))
+                    .WherePasses(new BoundingBoxIntersectsFilter(outline, BoundingBoxToleranceFeet));
+                if (dwgHostFilter != null) collector.WherePasses(dwgHostFilter);
+                if (cameraHostFilter != null) collector.WherePasses(cameraHostFilter);
+                if (curveHostFilter != null) collector.WherePasses(curveHostFilter);
+                using (FilteredElementIdIterator iterator = collector.GetElementIdIterator())
+                {
+                    while (iterator.MoveNext())
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (ids.Count == maxReusableCandidates)
+                            return new PreliminaryCandidates { Bounds = outline, Ids = null };
+                        ids.Add(iterator.Current);
+                    }
+                }
+                return new PreliminaryCandidates { Bounds = outline, Ids = ids };
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return null; }
+        }
+
+        private static List<Element> FindHostCandidates(Document hostDocument, Outline outline,
+            List<Outline> parts, bool completeParts, PreliminaryCandidates preliminary, ElementFilter dwgHostFilter, ElementFilter cameraHostFilter, ElementFilter curveHostFilter, CancellationToken cancellationToken)
+        {
+            // Um filtro mais preciso só pode reutilizar candidatos da caixa anterior se
+            // estiver inteiramente contido nela. Em qualquer dúvida, consulta o projeto.
+            ElementFilter exactFilter = LinkBoundingBoxes.CreateCandidateFilter(outline, parts, completeParts, BoundingBoxToleranceFeet);
+            if (preliminary?.Ids != null && LinkBoundingBoxes.Contains(preliminary.Bounds, outline))
+            {
+                try
+                {
+                    var matches = new List<Element>();
+                    foreach (ElementId id in preliminary.Ids)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!exactFilter.PassesFilter(hostDocument, id)) continue;
+                        Element candidate = hostDocument.GetElement(id);
+                        if (IsEligibleHost(candidate)) matches.Add(candidate);
+                    }
+                    return matches;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* Recorre à busca completa quando o Revit recusa o filtro. */ }
+            }
+            var collector = new FilteredElementCollector(hostDocument)
+                .WhereElementIsNotElementType()
+                .WherePasses(exactFilter);
+            if (dwgHostFilter != null)
+            {
+                try { collector.WherePasses(dwgHostFilter); }
+                catch { /* O filtro por elemento continua em vigor. */ }
+            }
+            if (cameraHostFilter != null)
+            {
+                try { collector.WherePasses(cameraHostFilter); }
+                catch { /* A exclusão por tipo no hospedeiro continua em vigor. */ }
+            }
+            if (curveHostFilter != null)
+            {
+                try { collector.WherePasses(curveHostFilter); }
+                catch { /* A verificação por tipo continua em vigor. */ }
+            }
+            return collector.Where(IsEligibleHost).ToList();
+        }
+
+        internal static HostGeometry ExtractGeometry(Element element, Options options, Transform transform, CancellationToken cancellationToken)
+        {
+            var result = new HostGeometry { Solids = new List<Solid>(), IsComplete = true };
+            GeometryElement geometry = null;
+            bool complete = true;
+            try
+            {
+                geometry = element.get_Geometry(options);
+                if (geometry == null) complete = false;
+                else foreach (GeometryObject geometryObject in geometry)
+                    AddSolids(geometryObject, result.Solids, transform, ref complete);
+            }
+            catch { complete = false; }
+            // Alguns componentes aninhados são elementos próprios no documento e não aparecem
+            // na geometria da família pai. Evita somar duas vezes a geometria já encontrada.
+            if (result.Solids.Count == 0 && element is FamilyInstance family)
+            {
+                CollectSubcomponentSolids(family, options, transform, result.Solids, cancellationToken);
+                // Mesmo com sólidos recuperados, outros componentes podem não estar expostos.
+                // Uma interseção positiva confirma o conflito; ausência dela não comprova limpeza.
+                if (result.Solids.Count > 0) complete = false;
+            }
+            result.IsComplete = complete;
+            if (result.Solids.Count == 0)
+            {
+                if (geometry == null)
+                {
+                    try { geometry = element.get_Geometry(options); }
+                    catch { /* Mantém a alternativa aproximada vazia. */ }
+                }
+                bool unreliable;
+                int emptySolids;
+                result.Outlines = GetGeometryOutlines(geometry, transform, out unreliable, out emptySolids);
+                result.EmptySolidOccurrences = emptySolids;
+                if (unreliable || result.Outlines.Count == 0)
+                {
+                    Outline fallback = TryGetElementOutline(element, transform);
+                    if (fallback != null) result.Outlines.Add(fallback);
+                    else result.HasUnresolvedBounds = true;
+                }
+            }
+            return result;
+        }
+
+        private static void CollectSubcomponentSolids(FamilyInstance root, Options options, Transform transform,
+            ICollection<Solid> solids, CancellationToken cancellationToken, bool visitAll = false, List<string> details = null)
+        {
+            const int maxComponents = 256;
+            var visited = new HashSet<ElementId> { root.Id };
+            var pending = new Stack<FamilyInstance>();
+            pending.Push(root);
+            while (pending.Count > 0 && visited.Count <= maxComponents)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                FamilyInstance parent = pending.Pop();
+                ICollection<ElementId> ids;
+                try { ids = parent.GetSubComponentIds(); }
+                catch { if (details != null && details.Count < 12) details.Add($"#{parent.Id.IntegerValue}: erro ao obter subcomponentes"); continue; }
+                if (ids == null) continue;
+                foreach (ElementId id in ids)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (visited.Count >= maxComponents) { details?.Add("limite de subcomponentes atingido"); return; }
+                    if (id == null || !visited.Add(id)) continue;
+                    try
+                    {
+                        Element child = root.Document.GetElement(id);
+                        if (child == null) continue;
+                        if (visitAll && child is FamilyInstance nestedFamily) pending.Push(nestedFamily);
+                        int before = solids.Count;
+                        bool childComplete = true;
+                        GeometryElement geometry = child.get_Geometry(options);
+                        if (geometry != null)
+                            foreach (GeometryObject item in geometry)
+                                AddSolids(item, solids, transform, ref childComplete);
+                        if (details != null && details.Count < 12)
+                            details.Add($"#{id.IntegerValue} {child.Category?.Name ?? "(sem categoria)"} {child.Name}: {solids.Count - before} sólido(s), extração {(childComplete ? "completa" : "incompleta")}, caixa do primeiro: {DescribeSolidBounds(solids.Skip(before).FirstOrDefault())}");
+                        // Só desce quando a geometria do componente ainda não trouxe sólidos.
+                        if (!visitAll && solids.Count == before && child is FamilyInstance childFamily)
+                            pending.Push(childFamily);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch { if (details != null && details.Count < 12) details.Add($"#{id.IntegerValue}: erro ao ler subcomponente"); }
+                }
+            }
+        }
+
+        private static void AddSolids(GeometryObject geometryObject, ICollection<Solid> solids, Transform transform, ref bool complete)
         {
             if (geometryObject is Solid solid && solid.Volume > IntersectionToleranceCubicFeet)
             {
                 try
                 {
                     Solid transformed = transform.IsIdentity ? solid : SolidUtils.CreateTransformed(solid, transform);
-                    if (transformed != null && transformed.Volume > IntersectionToleranceCubicFeet)
-                        solids.Add(transformed);
+                    if (transformed == null) complete = false;
+                    else if (transformed.Volume > IntersectionToleranceCubicFeet) solids.Add(transformed);
                 }
-                catch
-                {
-                    // Solids inválidos para booleanas não são conflitos confiáveis.
-                }
-
+                catch { complete = false; }
                 return;
             }
-
+            if (geometryObject is Mesh)
+            {
+                // A malha não pode ser descartada como se tivesse sido testada por sólidos.
+                complete = false;
+                return;
+            }
             if (geometryObject is GeometryInstance instance)
             {
                 int initialCount = solids.Count;
-                Transform nestedTransform = instance.Transform == null
-                    ? transform
-                    : transform.Multiply(instance.Transform);
-
+                Transform nestedTransform = instance.Transform == null ? transform : transform.Multiply(instance.Transform);
                 try
                 {
                     GeometryElement symbolGeometry = instance.GetSymbolGeometry();
                     if (symbolGeometry != null)
-                    {
                         foreach (GeometryObject nested in symbolGeometry)
-                            AddSolids(nested, solids, nestedTransform);
-                    }
+                            AddSolids(nested, solids, nestedTransform, ref complete);
                 }
-                catch
-                {
-                    // Algumas geometrias DirectShape/IFC nao permitem SymbolGeometry.
-                }
-
+                catch { complete = false; }
                 if (solids.Count == initialCount)
                 {
                     try
                     {
                         GeometryElement instanceGeometry = instance.GetInstanceGeometry();
-                        if (instanceGeometry != null)
-                        {
-                            foreach (GeometryObject nested in instanceGeometry)
-                                AddSolids(nested, solids, transform);
-                        }
+                        if (instanceGeometry == null) complete = false;
+                        else foreach (GeometryObject nested in instanceGeometry)
+                            AddSolids(nested, solids, transform, ref complete);
                     }
-                    catch
-                    {
-                        // O fallback por caixa delimitadora continuara disponivel.
-                    }
+                    catch { complete = false; }
                 }
             }
         }
 
-        private static List<Outline> GetSolidOutlines(IEnumerable<Solid> solids)
+        private static string DescribeSolidBounds(Solid solid)
         {
-            List<Outline> outlines = new List<Outline>();
+            if (solid == null) return "indisponível";
+            try
+            {
+                Outline box = LinkBoundingBoxes.CreateOutline(solid.GetBoundingBox(), Transform.Identity);
+                if (box == null) return "indisponível";
+                XYZ a = box.MinimumPoint, b = box.MaximumPoint;
+                return $"mm min({a.X * 304.8:F0},{a.Y * 304.8:F0},{a.Z * 304.8:F0}) max({b.X * 304.8:F0},{b.Y * 304.8:F0},{b.Z * 304.8:F0})";
+            }
+            catch { return "indisponível"; }
+        }
 
+        private static Outline TryGetElementOutline(Element element, Transform transform)
+        {
+            try
+            {
+                BoundingBoxXYZ box = element.get_BoundingBox(null);
+                Outline fallback = LinkBoundingBoxes.CreateOutline(box, transform);
+                return fallback == null || fallback.IsEmpty ? null : fallback;
+            }
+            catch { return null; }
+        }
+
+        private static List<Outline> GetSolidOutlines(Element element, IEnumerable<Solid> solids,
+            Transform transform, out bool unresolved)
+        {
+            var outlines = new List<Outline>();
+            bool invalid = false;
             foreach (Solid solid in solids)
             {
-                BoundingBoxXYZ box = solid.GetBoundingBox();
-                if (box == null)
-                    continue;
-
-                bool found = false;
-                XYZ min = null;
-                XYZ max = null;
-                AddBoxPoints(box, Transform.Identity, ref found, ref min, ref max);
-                if (found && min != null && max != null)
-                    outlines.Add(new Outline(min, max));
+                try
+                {
+                    // Estes sólidos já foram transformados para o sistema do projeto hospedeiro.
+                    Outline part = LinkBoundingBoxes.CreateOutline(solid.GetBoundingBox(), Transform.Identity);
+                    if (part == null) invalid = true;
+                    else outlines.Add(part);
+                }
+                catch { invalid = true; }
             }
-
+            unresolved = false;
+            if (invalid || outlines.Count == 0)
+            {
+                Outline fallback = TryGetElementOutline(element, transform);
+                if (fallback != null) outlines.Add(fallback);
+                else unresolved = true;
+            }
             return outlines;
         }
 
@@ -384,124 +791,68 @@ namespace RevitFamilyImporter.LinkConflict.Services
             return found && min != null && max != null ? new Outline(min, max) : null;
         }
 
-        private static void AddBoxPoints(BoundingBoxXYZ box, Transform parentTransform, ref bool found, ref XYZ min, ref XYZ max)
+        private static List<Outline> GetGeometryOutlines(GeometryElement geometry, Transform transform,
+            out bool unreliable, out int emptySolids)
         {
-            Transform boxTransform = box.Transform ?? Transform.Identity;
-            Transform totalTransform = parentTransform.Multiply(boxTransform);
-            XYZ[] points =
-            {
-                new XYZ(box.Min.X, box.Min.Y, box.Min.Z),
-                new XYZ(box.Min.X, box.Min.Y, box.Max.Z),
-                new XYZ(box.Min.X, box.Max.Y, box.Min.Z),
-                new XYZ(box.Min.X, box.Max.Y, box.Max.Z),
-                new XYZ(box.Max.X, box.Min.Y, box.Min.Z),
-                new XYZ(box.Max.X, box.Min.Y, box.Max.Z),
-                new XYZ(box.Max.X, box.Max.Y, box.Min.Z),
-                new XYZ(box.Max.X, box.Max.Y, box.Max.Z)
-            };
-
-            foreach (XYZ point in points)
-            {
-                XYZ transformed = totalTransform.OfPoint(point);
-                min = !found
-                    ? transformed
-                    : new XYZ(Math.Min(min.X, transformed.X), Math.Min(min.Y, transformed.Y), Math.Min(min.Z, transformed.Z));
-                max = !found
-                    ? transformed
-                    : new XYZ(Math.Max(max.X, transformed.X), Math.Max(max.Y, transformed.Y), Math.Max(max.Z, transformed.Z));
-                found = true;
-            }
-        }
-
-        private static List<Outline> GetGeometryOutlines(Element element, Options options, Transform transform)
-        {
-            List<Outline> outlines = new List<Outline>();
+            var outlines = new List<Outline>();
+            unreliable = false;
+            emptySolids = 0;
             try
             {
-                GeometryElement geometry = element.get_Geometry(options);
-                if (geometry == null)
-                    return outlines;
-
+                if (geometry == null) { unreliable = true; return outlines; }
                 foreach (GeometryObject geometryObject in geometry)
-                    AddGeometryOutline(geometryObject, outlines, transform);
+                    AddGeometryOutline(geometryObject, outlines, transform, ref unreliable, ref emptySolids);
             }
-            catch
-            {
-                // Alguns DirectShape/IFC nao expõem todos os objetos geometricos.
-            }
-
+            catch { unreliable = true; }
             return outlines;
         }
 
-        private static void AddGeometryOutline(GeometryObject geometryObject, ICollection<Outline> outlines, Transform transform)
+        private static void AddGeometryOutline(GeometryObject geometryObject, ICollection<Outline> outlines,
+            Transform transform, ref bool unreliable, ref int emptySolids)
         {
             if (geometryObject is Solid solid)
             {
-                BoundingBoxXYZ box = solid.GetBoundingBox();
-                if (box != null)
+                if (GeometryOutlinePolicy.IsEmptySolid(solid.Faces.Size, solid.Edges.Size))
                 {
-                    Outline outline = CreateOutline(box, transform);
-                    if (outline != null)
-                        outlines.Add(outline);
+                    emptySolids++;
+                    return;
                 }
+                Outline part = LinkBoundingBoxes.CreateOutline(solid.GetBoundingBox(), transform);
+                if (part != null) outlines.Add(part);
+                else unreliable = true;
                 return;
             }
-
             if (geometryObject is Mesh mesh)
             {
-                Outline meshOutline = GetMeshOutline(mesh, transform);
-                if (meshOutline != null)
-                    outlines.Add(meshOutline);
+                Outline part = GetMeshOutline(mesh, transform);
+                if (part != null) outlines.Add(part);
+                else unreliable = true;
                 return;
             }
-
             if (geometryObject is GeometryInstance instance)
             {
                 int initialCount = outlines.Count;
-                Transform nestedTransform = instance.Transform == null
-                    ? transform
-                    : transform.Multiply(instance.Transform);
-
+                Transform nestedTransform = instance.Transform == null ? transform : transform.Multiply(instance.Transform);
                 try
                 {
                     GeometryElement symbolGeometry = instance.GetSymbolGeometry();
                     if (symbolGeometry != null)
-                    {
                         foreach (GeometryObject nested in symbolGeometry)
-                            AddGeometryOutline(nested, outlines, nestedTransform);
-                    }
+                            AddGeometryOutline(nested, outlines, nestedTransform, ref unreliable, ref emptySolids);
                 }
-                catch
-                {
-                    // Usa o fallback de geometria da instancia abaixo.
-                }
-
+                catch { unreliable = true; }
                 if (outlines.Count == initialCount)
                 {
                     try
                     {
                         GeometryElement instanceGeometry = instance.GetInstanceGeometry();
-                        if (instanceGeometry != null)
-                        {
-                            foreach (GeometryObject nested in instanceGeometry)
-                                AddGeometryOutline(nested, outlines, transform);
-                        }
+                        if (instanceGeometry == null) unreliable = true;
+                        else foreach (GeometryObject nested in instanceGeometry)
+                            AddGeometryOutline(nested, outlines, transform, ref unreliable, ref emptySolids);
                     }
-                    catch
-                    {
-                        // Sem caixa por parte, o elemento nao gera aviso aproximado.
-                    }
+                    catch { unreliable = true; }
                 }
             }
-        }
-
-        private static Outline CreateOutline(BoundingBoxXYZ box, Transform parentTransform)
-        {
-            bool found = false;
-            XYZ min = null;
-            XYZ max = null;
-            AddBoxPoints(box, parentTransform, ref found, ref min, ref max);
-            return found && min != null && max != null ? new Outline(min, max) : null;
         }
 
         private static Outline GetMeshOutline(Mesh mesh, Transform transform)
@@ -524,62 +875,24 @@ namespace RevitFamilyImporter.LinkConflict.Services
             return found && min != null && max != null ? new Outline(min, max) : null;
         }
 
-        private static Outline FindPartOverlap(IEnumerable<Outline> firstParts, IEnumerable<Outline> secondParts)
-        {
-            foreach (Outline first in firstParts)
-            {
-                if (first == null)
-                    continue;
-
-                foreach (Outline second in secondParts)
-                {
-                    if (second == null)
-                        continue;
-
-                    Outline overlap = GetOutlineOverlap(first, second);
-                    if (overlap != null)
-                        return overlap;
-                }
-            }
-
-            return null;
-        }
-
-        private static Outline GetOutlineOverlap(Outline first, Outline second)
-        {
-            XYZ min = new XYZ(
-                Math.Max(first.MinimumPoint.X, second.MinimumPoint.X),
-                Math.Max(first.MinimumPoint.Y, second.MinimumPoint.Y),
-                Math.Max(first.MinimumPoint.Z, second.MinimumPoint.Z));
-            XYZ max = new XYZ(
-                Math.Min(first.MaximumPoint.X, second.MaximumPoint.X),
-                Math.Min(first.MaximumPoint.Y, second.MaximumPoint.Y),
-                Math.Min(first.MaximumPoint.Z, second.MaximumPoint.Z));
-
-            double x = max.X - min.X;
-            double y = max.Y - min.Y;
-            double z = max.Z - min.Z;
-            return x > BoundingBoxToleranceFeet &&
-                   y > BoundingBoxToleranceFeet &&
-                   z > BoundingBoxToleranceFeet
-                ? new Outline(min, max)
-                : null;
-        }
-
         private static XYZ GetOutlineCenter(Outline outline)
         {
             return (outline.MinimumPoint + outline.MaximumPoint) * 0.5;
         }
 
-        private sealed class IntersectionData
+        internal sealed class IntersectionData
         {
             public double Volume { get; set; }
             public XYZ Point { get; set; }
+            public bool BooleanFailed { get; set; }
+            public bool IsPartial { get; set; }
+            public int OverlappingBoxes { get; set; }
+            public int BooleanAttempts { get; set; }
         }
 
-        private static IntersectionData GetIntersectionData(IEnumerable<Solid> linkedSolids, IEnumerable<Solid> hostSolids,
-            Dictionary<Solid, BoundingBoxXYZ> linkedBoxes, Dictionary<Solid, BoundingBoxXYZ> hostBoxes,
-            CancellationToken cancellationToken)
+        internal static IntersectionData GetIntersectionData(IEnumerable<Solid> linkedSolids, IEnumerable<Solid> hostSolids,
+            Dictionary<Solid, Outline> linkedBoxes, Dictionary<Solid, Outline> hostBoxes,
+            CancellationToken cancellationToken, bool stopOnFirst = false)
         {
             IntersectionData result = new IntersectionData();
             double weightedX = 0;
@@ -590,8 +903,11 @@ namespace RevitFamilyImporter.LinkConflict.Services
                 foreach (Solid hostSolid in hostSolids)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (!BoundingBoxesOverlap(GetCachedBoundingBox(linkedSolid, linkedBoxes), GetCachedBoundingBox(hostSolid, hostBoxes)))
+                    if (!LinkBoundingBoxes.BoundingBoxesOverlap(GetCachedBoundingBox(linkedSolid, linkedBoxes), GetCachedBoundingBox(hostSolid, hostBoxes), BoundingBoxToleranceFeet))
                         continue;
+
+                    result.OverlappingBoxes++;
+                    result.BooleanAttempts++;
 
                     try
                     {
@@ -599,22 +915,39 @@ namespace RevitFamilyImporter.LinkConflict.Services
                             linkedSolid,
                             hostSolid,
                             BooleanOperationsType.Intersect);
-                        if (intersection == null || intersection.Volume <= IntersectionToleranceCubicFeet)
+                        if (intersection == null)
+                        {
+                            result.BooleanFailed = true;
+                            continue;
+                        }
+                        double volume = intersection.Volume;
+                        if (double.IsNaN(volume) || double.IsInfinity(volume) || volume < 0)
+                        {
+                            result.BooleanFailed = true;
+                            continue;
+                        }
+                        if (volume <= IntersectionToleranceCubicFeet)
                             continue;
 
                         XYZ centroid = GetSolidPoint(intersection);
                         if (centroid != null)
                         {
-                            weightedX += centroid.X * intersection.Volume;
-                            weightedY += centroid.Y * intersection.Volume;
-                            weightedZ += centroid.Z * intersection.Volume;
+                            weightedX += centroid.X * volume;
+                            weightedY += centroid.Y * volume;
+                            weightedZ += centroid.Z * volume;
                         }
 
-                        result.Volume += intersection.Volume;
+                        result.Volume += volume;
+                        if (stopOnFirst)
+                        {
+                            result.Point = centroid;
+                            result.IsPartial = true;
+                            return result;
+                        }
                     }
                     catch
                     {
-                        // A geometria pode não ser adequada para a operação booleana.
+                        result.BooleanFailed = true;
                     }
                 }
             }
@@ -642,28 +975,19 @@ namespace RevitFamilyImporter.LinkConflict.Services
             }
         }
 
-        private static BoundingBoxXYZ GetCachedBoundingBox(Solid solid, Dictionary<Solid, BoundingBoxXYZ> cache)
+        private static Outline GetCachedBoundingBox(Solid solid, Dictionary<Solid, Outline> cache)
         {
             if (solid == null) return null;
-            if (!cache.TryGetValue(solid, out BoundingBoxXYZ box))
+            if (!cache.TryGetValue(solid, out Outline outline))
             {
-                box = solid.GetBoundingBox();
-                cache[solid] = box;
+                BoundingBoxXYZ box = solid.GetBoundingBox();
+                try { outline = box == null ? null : LinkBoundingBoxes.CreateOutline(box, Transform.Identity); }
+                catch { outline = null; }
+                if (outline != null && outline.IsEmpty) outline = null;
+                cache[solid] = outline;
             }
-            return box;
+            return outline;
         }
 
-        private static bool BoundingBoxesOverlap(BoundingBoxXYZ firstBox, BoundingBoxXYZ secondBox)
-        {
-            if (firstBox == null || secondBox == null)
-                return true;
-
-            return firstBox.Min.X <= secondBox.Max.X + BoundingBoxToleranceFeet &&
-                   firstBox.Max.X + BoundingBoxToleranceFeet >= secondBox.Min.X &&
-                   firstBox.Min.Y <= secondBox.Max.Y + BoundingBoxToleranceFeet &&
-                   firstBox.Max.Y + BoundingBoxToleranceFeet >= secondBox.Min.Y &&
-                   firstBox.Min.Z <= secondBox.Max.Z + BoundingBoxToleranceFeet &&
-                   firstBox.Max.Z + BoundingBoxToleranceFeet >= secondBox.Min.Z;
-        }
     }
 }

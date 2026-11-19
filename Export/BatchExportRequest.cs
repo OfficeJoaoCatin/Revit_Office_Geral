@@ -16,6 +16,11 @@ namespace RevitFamilyImporter.Export
 
         public bool ForceGlobalDwgSettings { get; set; } = true;
 
+        public bool CopyDwgSetupToProjects { get; set; }
+        public Document? DwgSetupSourceDocument { get; set; }
+        public string DwgSetupSourceKey { get; set; } = string.Empty;
+        public System.Action<string>? DwgSetupMessage { get; set; }
+
         public string NamingTemplate { get; set; } = "{SheetNumber} - {SheetName}";
 
         public PdfExportSettingsInfo PdfSettings { get; set; } = new PdfExportSettingsInfo();

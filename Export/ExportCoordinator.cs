@@ -25,7 +25,7 @@ namespace RevitFamilyImporter.Export
             Watchdog watchdog = new Watchdog();
             TimeoutController timeoutController = new TimeoutController(request.TimeoutSeconds);
             MemoryMonitor memoryMonitor = new MemoryMonitor(request.MemoryLimitMb);
-            ExportWorker worker = new ExportWorker(timeoutController, logger, heartbeat);
+            using ExportWorker worker = new ExportWorker(timeoutController, logger, heartbeat);
 
             List<ExportJob> jobs = BuildJobs(request);
             ExportQueue queue = new ExportQueue(jobs);
@@ -38,6 +38,7 @@ namespace RevitFamilyImporter.Export
                 LogPath = logger.LogPath,
                 TotalJobs = jobs.Count
             };
+            request.DwgSetupMessage = message => { report.DwgSetupMessages.Add(message); try { logger.LogMessage(message); } catch { /* O relatório conserva a mensagem. */ } };
 
             int completedCount = 0;
             progress?.Invoke(new ExportProgressInfo

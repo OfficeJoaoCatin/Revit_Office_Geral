@@ -10,6 +10,8 @@
     <Compile Include="..\..\DwgClash\Models\DwgClashAnalysisMode.cs" Link="DwgClashAnalysisMode.cs" />
     <Compile Include="..\..\DwgClash\Models\DwgClashClosedRegionMode.cs" Link="DwgClashClosedRegionMode.cs" />
     <Compile Include="..\..\DwgClash\Services\DwgClashCompletionKey.cs" Link="DwgClashCompletionKey.cs" />
+    <Compile Include="..\..\DwgClash\Services\DwgCompletionMigration.cs" Link="DwgCompletionMigration.cs" />
+    <Compile Include="..\..\DwgClash\Services\DwgMarkerPoint.cs" Link="DwgMarkerPoint.cs" />
     <Compile Include="..\..\DwgClash\Services\DwgRegionBuilder.cs" Link="DwgRegionBuilder.cs" />
     <Compile Include="..\..\DwgClash\Services\ResultGenerator.cs" Link="ResultGenerator.cs" />
     <Compile Include="..\..\DwgClash\Services\DwgRegionSpatialIndex.cs" Link="DwgRegionSpatialIndex.cs" />

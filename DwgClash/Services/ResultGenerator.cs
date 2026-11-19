@@ -30,6 +30,7 @@ namespace RevitFamilyImporter.DwgClash.Services
 
             progress?.Invoke("Indexando regiões do DWG...", 0, 0);
             var index = new DwgRegionSpatialIndex(regions, cancellationToken);
+            var grouped = new Dictionary<(string, int), DwgClashResult>();
             for (int elementIndex = 0; elementIndex < elements.Count; elementIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -45,13 +46,32 @@ namespace RevitFamilyImporter.DwgClash.Services
 
                     if (string.IsNullOrEmpty(region.CompletionGeometryKey))
                         region.CompletionGeometryKey = DwgClashCompletionKey.ForRegion(region, cancellationToken);
-                    report.Results.Add(new DwgClashResult
+                    string owner = string.IsNullOrWhiteSpace(element.OwnerUniqueId) ? element.UniqueId : element.OwnerUniqueId;
+                    // Sem identidade estável não agrupa elementos diferentes por engano.
+                    if (string.IsNullOrWhiteSpace(owner)) owner = "element-index:" + elementIndex;
+                    var groupKey = (owner, regionIndex);
+                    if (grouped.TryGetValue(groupKey, out DwgClashResult existing))
+                    {
+                        if (!string.IsNullOrWhiteSpace(element.UniqueId)) existing.PreviousCompletionKeys.Add(element.UniqueId + "|" + region.CompletionGeometryKey);
+                        // Prefere a família mãe quando ela também conflita; mantém a geometria
+                        // aninhada caso apenas o componente tenha sido atingido.
+                        if (element.UniqueId == owner && existing.Element.UniqueId != owner)
+                        {
+                            existing.Element = element;
+                            existing.DistanceFeet = distance == double.MaxValue ? 0 : distance;
+                        }
+                        continue;
+                    }
+                    var result = new DwgClashResult
                     {
                         Number = report.Results.Count + 1,
                         Element = element,
                         Region = region,
                         DistanceFeet = distance == double.MaxValue ? 0 : distance
-                    });
+                    };
+                    if (!string.IsNullOrWhiteSpace(element.UniqueId)) result.PreviousCompletionKeys.Add(element.UniqueId + "|" + region.CompletionGeometryKey);
+                    grouped.Add(groupKey, result);
+                    report.Results.Add(result);
                 }
             }
             progress?.Invoke("Comparação concluída.", elements.Count, elements.Count);
